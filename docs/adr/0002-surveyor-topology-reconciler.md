@@ -54,14 +54,15 @@ uses `bd` is a first-class Gas Town participant. `gt` does not enumerate or
 register agents — coordination is through Dolt and Beads, which are both
 accessible from outside `gt`.
 
-The Surveyor requires exactly four capabilities, all externally available:
+The Surveyor requires exactly five capabilities, all externally available:
 
 | Capability | Mechanism | `gt` change? |
 |------------|-----------|--------------|
 | Read `desired_topology` | Dolt SQL (external) | No |
-| Read actual state | Dolt SQL (external) | No |
+| Read actual state | Dolt SQL + filesystem (external) | No |
 | Watch for state changes | Dolt change feed / binlog (external) | No |
-| File escalations | `bd create` | No |
+| Delegate operations | `bd create` — Beads picked up by Dogs/Deacon | No |
+| Escalate and report | `bd create` to Mayor | No |
 
 **The Surveyor is invisible to `gt`.** It participates in the Gas Town
 ecosystem through the same Dolt and Beads surfaces every other participant uses.
@@ -162,22 +163,25 @@ provides proof of convergence; a Go service provides proof of task assignment.
 
 ---
 
-### Decision 5: Beads as the escalation channel — no action_queue
+### Decision 5: Beads as the coordination channel for both operations and escalation
 
-**Chosen**: The Surveyor uses `bd create` to file escalation Beads to Mayor
-when it cannot converge. No `action_queue` Dolt tables are introduced.
+**Chosen**: The Surveyor uses `bd create` for two distinct purposes: filing
+operation Beads that Dogs/Deacon execute, and filing escalation Beads to Mayor
+when convergence fails. No `action_queue` Dolt tables are introduced.
 
 **Rationale**:
 
 Introducing `action_queue` requires `gt` agents to consume it — a binary
 modification. Beads are the existing, external-writable coordination primitive
-in Gas Town. Any agent (including the Surveyor) can file a Bead. Mayor
-already processes Beads. No new infrastructure, no new `gt` contract.
+in Gas Town. Any agent (including the Surveyor) can file a Bead. Dogs and
+Deacon already process maintenance Beads. Mayor already processes escalation
+Beads. No new infrastructure, no new `gt` contract.
 
-For normal operations (rig add, drain, scale), the Surveyor executes directly
-rather than delegating to Beads. Beads are used only for escalation: stuck
-drains, partial failure requiring human judgement, repeated convergence
-failures.
+The Surveyor does not execute topology operations itself. It reasons about what
+needs to change and delegates execution to Dogs via Beads. This preserves the
+separation of concerns: the Surveyor owns the plan, Dogs own the execution.
+The verify loop (Decision 4) is what closes the "Bead closed ≠ state
+reached" gap — the Surveyor checks actual state directly, not Bead lifecycle.
 
 ---
 
@@ -209,42 +213,125 @@ the reconcile loop — consistent with ADR-0001 Decision 3.
 
 ---
 
+### Decision 7: AI-reasoned delta, Dogs as executors, Mayor as supervisor
+
+**Chosen**: The Surveyor computes its reconcile plan through AI reasoning, not
+a hardcoded deterministic diff. Dogs execute the resulting operation Beads.
+The Surveyor reports status to Mayor through normal Bead channels throughout.
+
+**Why AI reasoning for the delta, not a hardcoded state machine**:
+
+A row-by-row SQL diff can identify *what* differs. It cannot reason about
+*whether and how* to act on that difference. Consider cases a deterministic
+diff cannot handle correctly without extensive `if/else` branching:
+
+- Desired has 20 Polecats, actual has 18 — is that a convergence failure or
+  normal churn as Polecats complete tasks and respawn?
+- Desired says remove rig X, but rig X has a Witness-escalated Polecat that
+  Mayor has not yet resolved — wait, or force-remove?
+- Desired enables rig Y, but rig Y's repo has an active merge conflict in
+  Refinery — proceed with agent startup or block until Refinery clears?
+- A drain has been running for 40 minutes on a rig with 3 remaining Polecats —
+  is that expected for a large task, or is a Polecat hung?
+
+The Surveyor uses its LLM reasoning to interpret these situations in context.
+It reads `desired_topology`, `actual_topology`, active Beads, and Dolt
+operational state, then plans the minimal safe set of operations. This is not
+guessing — it is applying judgement that would otherwise require a human
+operator or an increasingly complex rule engine.
+
+**Execution model — Dogs as the execution layer**:
+
+The Surveyor creates one Bead per atomic operation. Dogs (Deacon's maintenance
+agents) pick up and execute these Beads. This preserves Gas Town's existing
+agent hierarchy: the Surveyor plans, Dogs act.
+
+Example operations filed as Beads:
+```
+bd create "Add rig: backend" --type=task --priority=1 \
+  --description="gt rig add --repo=... --branch=main. Part of reconcile/<uuid>"
+
+bd create "Drain rig: frontend" --type=task --priority=0 \
+  --description="Gracefully drain all Polecats on rig frontend, then disable.
+                 Block: do not proceed until Polecat count reaches 0.
+                 Part of reconcile/<uuid>"
+```
+
+Operation Beads carry the reconcile UUID so the Surveyor can track plan
+completion before running the verify loop.
+
+**Execution ordering**:
+
+The Surveyor encodes ordering through Bead dependencies (`bd dep add`):
+- Removes and drains before adds (free resources first)
+- Drain must complete before remove (enforced as a Bead dependency)
+- Independent rig operations are parallel (no dependency, Dogs pick them up
+  concurrently)
+
+**Mayor reporting**:
+
+The Surveyor reports reconcile status to Mayor at three points:
+1. **Plan filed**: Bead to Mayor summarising the planned operations and
+   reconcile UUID, so Mayor has visibility without being in the critical path.
+2. **Convergence confirmed**: Bead closed with convergence score and duration.
+3. **Escalation**: if the verify loop fails after N retries, a high-priority
+   Bead to Mayor with full context: desired snapshot, actual snapshot, delta,
+   failed operations, and the list of unresolved Dog Beads.
+
+Mayor is never in the critical path for normal reconcile — it is informed, not
+consulted. It is only consulted on escalation, preserving its role as the
+human-interface and decision-maker of last resort.
+
+---
+
 ## Surveyor State Machine
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     SURVEYOR LOOP                       │
-│                                                         │
-│  startup / change-feed event                            │
-│         │                                               │
-│         ▼                                               │
-│  Read desired_topology (Dolt)                           │
-│  Read actual_topology  (Dolt)                           │
-│         │                                               │
-│         ▼                                               │
-│  Compute delta                                          │
-│         │                                               │
-│    empty?──── yes ──────────────────► idle / wait       │
-│         │                                               │
-│         ▼ no                                            │
-│  Open Dolt branch reconcile/<uuid>                      │
-│         │                                               │
-│         ▼                                               │
-│  Execute plan (removes before adds)                     │
-│         │                                               │
-│    step fails?──── yes ──► abandon branch               │
-│         │                        │                      │
-│         ▼ no                     ▼                      │
-│  VERIFY LOOP                bd create escalation Bead   │
-│    re-query actual state    │ (→ Mayor)                 │
-│    compute convergence score◄────────────────────────── │
-│         │                                               │
-│    score >= threshold? ── yes ── merge branch ──► done  │
-│         │                                               │
-│    retries < N? ─── yes ──► wait + retry                │
-│         │                                               │
-│    no ──► abandon branch + bd create escalation Bead    │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                      SURVEYOR LOOP                           │
+│                                                              │
+│  startup / change-feed event                                 │
+│         │                                                    │
+│         ▼                                                    │
+│  Read desired_topology (Dolt)                                │
+│  Read actual_topology  (Dolt + filesystem)                   │
+│  Read active Beads + Dolt operational state                  │
+│         │                                                    │
+│         ▼                                                    │
+│  Reason about delta  ◄── AI judgement, not hardcoded diff    │
+│         │                                                    │
+│    empty?──── yes ─────────────────────► idle / wait         │
+│         │                                                    │
+│         ▼ no                                                 │
+│  Open Dolt branch reconcile/<uuid>                           │
+│  bd create plan-summary Bead → Mayor  (inform, not block)    │
+│         │                                                    │
+│         ▼                                                    │
+│  bd create operation Beads (one per atomic op)               │
+│    └─ drain before remove (bd dep add enforces ordering)     │
+│    └─ independent rigs run in parallel                       │
+│         │                                                    │
+│  Dogs/Deacon pick up and execute operation Beads             │
+│         │                                                    │
+│    Dog Bead fails? ── yes ──► abandon branch                 │
+│         │                           │                        │
+│         ▼ all Beads closed          ▼                        │
+│  VERIFY LOOP               bd create escalation Bead → Mayor │
+│    re-query actual state                                      │
+│    re-query process health                                    │
+│    compute convergence score                                  │
+│         │                                                    │
+│    score >= threshold? ─ yes ─► merge branch                 │
+│         │                           │                        │
+│         │                      bd create convergence Bead    │
+│         │                           │ (→ Mayor, close plan)  │
+│         │                           ▼                        │
+│         │                        done                        │
+│         ▼ no                                                 │
+│    retries < N? ─── yes ──► wait (backoff) + retry           │
+│         │                                                    │
+│    no ──► abandon branch + bd create escalation Bead → Mayor │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -287,11 +374,13 @@ the reconcile loop — consistent with ADR-0001 Decision 3.
 
 ### Out of scope for this ADR
 
-- `actual_topology` Dolt table schema (→ new issue from this ADR)
-- Surveyor `CLAUDE.md` content (→ new issue from this ADR)
-- Dolt branch reconcile transaction protocol (→ new issue from this ADR)
-- Convergence verification scoring and thresholds (→ new issue from this ADR)
-- `[town.agents]` schema extension (→ new issue from this ADR)
+- `actual_topology` Dolt table schema (→ dgt-fkm)
+- Surveyor `CLAUDE.md` content and exact reasoning protocol (→ dgt-9tj)
+- Dolt branch reconcile transaction protocol (→ dgt-wv5)
+- Convergence verification scoring and thresholds (→ dgt-fqg)
+- `[town.agents]` schema extension (→ dgt-q8q)
+- Dog Bead schema — what fields operation Beads carry (reconcile UUID, op
+  type, target rig, parameters) so Dogs can execute without ambiguity (→ dgt-9tj)
 - K8s operator reconcile integration (→ dgt-3j8)
 - Deacon Formula for Surveyor health monitoring (→ future, pending Formula
   semantics validation)
