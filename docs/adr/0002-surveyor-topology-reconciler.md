@@ -43,8 +43,9 @@ inside it. No `gt` modification required.
 |--------|-----------------|
 | Deacon patrol inside `gt` | Couples topology control-plane logic to the agent runtime binary. The reconciler becomes permanently tied to Gas Town's release cycle — the exact problem ADR-0001 solved for `town-ctl`. |
 | Standalone Go service writing to `action_queue` Dolt tables | `gt` agents must consume `action_queue`, which requires modifying the `gt` binary to add a new Dolt change-feed subscription. A fork in disguise — the coupling is on the consumption side rather than the generation side. |
-| Go service writing Beads (no action_queue) | Deterministic only at the Bead-generation layer. Execution is still AI-driven by Dogs/Polecats. "Bead closed" ≠ "desired state reached" — no proof of convergence. Go service is architecturally foreign to an AI-native system with no Witness, no Mayor escalation path, and no place in the agent hierarchy. |
+| Go service writing Beads (no action_queue) | Deterministic only at the Bead-generation layer. Execution is still AI-driven by Dogs. "Bead closed" ≠ "desired state reached" — no proof of convergence. Go service is architecturally foreign to an AI-native system with no Witness, no Mayor escalation path, and no place in the agent hierarchy. |
 | Surveyor as new `gt`-managed role | Would require `gt` to enumerate, launch, and supervise an 8th role — a binary modification. |
+| Reconcile plan as a MEOW Molecule | The MEOW stack (Beads → Wisps → Molecules → Protomolecules) exists precisely for multi-step workflows. A reconcile plan maps naturally to a Molecule (ordered DAG of Beads), with Polecats or Dogs as executors. Rejected because: Molecule semantics are designed for coding workflows, not infrastructure operations; the Molecule lifecycle does not include a convergence-verify step; and adding verify semantics to Molecules would require `gt` changes. The Surveyor achieves the same DAG-of-Beads structure using plain `bd dep add` without modifying the Molecule subsystem. |
 
 **Rationale**:
 
@@ -127,11 +128,40 @@ verification, and the convergence score at close time. Failed attempts
 (abandoned branches) are also retained — the full history of reconcile
 attempts is queryable.
 
-Partial failure semantics: if any operation in the reconcile plan fails, the
-entire branch is abandoned. `desired_topology` main is unchanged. The
-Surveyor files an escalation Bead to Mayor and exits the reconcile loop.
-This is the transactional option — one bad rig does not partially apply
-the rest.
+**What the reconcile branch contains — and what it does not**:
+
+The branch is a **planning and audit artifact**, not a transaction isolation
+scope for running-state changes. Beads (created via `bd`) write to Dolt
+`main`. Dogs execute operation Beads and write `actual_topology` updates to
+`main`. The reconcile branch records:
+
+- Plan metadata: reconcile UUID, timestamp, list of operation Beads created,
+  desired state snapshot at plan time.
+- Verification result: actual state snapshot post-verify, convergence score.
+
+The merge commit to `main` is the durable audit record. Abandoned branches
+retain the plan metadata and the reason for abandonment — queryable after the
+fact.
+
+**Stale branch handling**:
+
+If the Surveyor crashes mid-reconcile and restarts, it detects any open
+`reconcile/*` branch older than a configured TTL, marks it abandoned with
+reason `surveyor-crash`, and starts a fresh reconcile from current state.
+This ensures GUPP compliance without event replay — the state itself drives
+re-reconcile. Formal protocol and TTL configuration are in → dgt-wv5.
+
+**Mid-reconcile desired_topology change**:
+
+If `desired_topology` changes while a reconcile is in progress, the Surveyor
+completes the current reconcile before re-evaluating. It does not restart
+mid-flight. The subsequent change-feed event triggers a new reconcile pass
+that handles the incremental delta. Detailed protocol deferred to → dgt-9tj.
+
+**Partial failure semantics**: if any Dog Bead fails, the entire reconcile
+branch is abandoned. `desired_topology` main is unchanged. The Surveyor files
+an escalation Bead to Mayor and exits the reconcile loop. One bad rig does
+not partially apply the rest.
 
 ---
 
@@ -371,6 +401,12 @@ human-interface and decision-maker of last resort.
 - **`town.toml` schema extension**: `[town.agents]` block must be added to
   the manifest format, Go structs, and JSON Schema (→ affects dgt-4gp,
   dgt-wpk).
+- **Stale branch TTL** must be configurable and its default chosen carefully:
+  too short and a slow drain triggers a false crash-recovery; too long and a
+  genuinely crashed reconcile blocks the next one (→ dgt-wv5).
+- **Mid-reconcile change protocol** must be specified in the Surveyor
+  `CLAUDE.md`: how the Surveyor detects an in-flight change, whether it
+  drains or aborts, and how it queues the follow-up reconcile (→ dgt-9tj).
 
 ### Out of scope for this ADR
 
