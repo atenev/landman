@@ -15,14 +15,17 @@ package manifest
 type TownManifest struct {
 	// Version is the manifest format version. town-ctl refuses to apply an
 	// unknown version (ADR-0001, Decision 5).
-	Version  string       `toml:"version"  json:"version"  validate:"required,eq=1"`
-	Town     TownConfig   `toml:"town"     json:"town"     validate:"required"`
-	Defaults RigDefaults  `toml:"defaults" json:"defaults"`
+	Version  string        `toml:"version"  json:"version"  validate:"required,eq=1"`
+	Town     TownConfig    `toml:"town"     json:"town"     validate:"required"`
+	Defaults RigDefaults   `toml:"defaults" json:"defaults"`
 	Secrets  SecretsConfig `toml:"secrets"  json:"secrets"`
 	// Includes lists relative glob patterns for per-rig TOML fragments resolved
 	// before the Dolt write (ADR-0001, Decision 6; merge semantics → dgt-cfi).
-	Includes []string  `toml:"includes" json:"includes"`
-	Rigs     []RigSpec `toml:"rig"      json:"rig"       validate:"dive"`
+	Includes []string   `toml:"includes" json:"includes"`
+	Rigs     []RigSpec  `toml:"rig"      json:"rig"      validate:"dive"`
+	// Roles declares custom agent roles (ADR-0004). Roles are defined globally
+	// and opted into per-rig via [rig.agents].roles.
+	Roles []RoleSpec `toml:"role" json:"role" validate:"dive"`
 }
 
 // TownConfig describes the Gas Town instance itself.
@@ -89,10 +92,69 @@ type AgentConfig struct {
 	// MayorClaudeMD is the path to the Mayor's CLAUDE.md for this rig.
 	// Path interpolation applies (${GT_HOME}, etc.).
 	MayorClaudeMD string `toml:"mayor_claude_md" json:"mayor_claude_md,omitempty"`
+
+	// Roles lists the names of custom [[role]] entries to activate on this rig.
+	// Each name must match a globally defined [[role]] with scope="rig".
+	// town-scoped roles need no entry here — they are active globally.
+	Roles []string `toml:"roles" json:"roles,omitempty"`
 }
 
 // FormulaRef references a scheduled Formula workflow declared under [[rig.formula]].
 type FormulaRef struct {
 	Name     string `toml:"name"     json:"name"     validate:"required"`
 	Schedule string `toml:"schedule" json:"schedule" validate:"required,cron"`
+}
+
+// RoleSpec declares a custom agent role (ADR-0004). Roles are defined globally
+// in town.toml and stored in desired_custom_roles. Per-rig activation is via
+// desired_rig_custom_roles (scope=rig) or implicit (scope=town).
+type RoleSpec struct {
+	// Name is the unique slug identifier for this role.
+	// Must not shadow a built-in role name.
+	Name        string          `toml:"name"        json:"name"        validate:"required,slug"`
+	Description string          `toml:"description" json:"description,omitempty"`
+	// Scope controls whether this role is rig-scoped (per-rig opt-in required)
+	// or town-scoped (active on every rig automatically).
+	Scope       string          `toml:"scope"       json:"scope"       validate:"required,oneof=rig town"`
+	Lifespan    string          `toml:"lifespan"    json:"lifespan"    validate:"omitempty,oneof=ephemeral persistent"`
+	Identity    RoleIdentity    `toml:"identity"    json:"identity"    validate:"required"`
+	Trigger     RoleTrigger     `toml:"trigger"     json:"trigger"     validate:"required"`
+	Supervision RoleSupervision `toml:"supervision" json:"supervision" validate:"required"`
+	Resources   RoleResources   `toml:"resources"   json:"resources"`
+}
+
+// RoleIdentity specifies how the role presents itself as a Claude Code agent.
+type RoleIdentity struct {
+	// ClaudeMD is the path to this role's CLAUDE.md file.
+	// Path interpolation applies. Must resolve at apply time (ADR-0004, Decision 2).
+	ClaudeMD string `toml:"claude_md" json:"claude_md" validate:"required"`
+	// Model overrides the Claude model for this role. Inherits from rig defaults if empty.
+	Model    string `toml:"model"     json:"model,omitempty"`
+}
+
+// RoleTrigger defines when a custom role agent is spawned.
+type RoleTrigger struct {
+	// Type determines the activation mechanism.
+	// bead_assigned: wakes when a Bead with assignee=<role-name> appears.
+	// schedule:      cron-driven; requires Schedule to be set.
+	// event:         CLAUDE.md polls for event Beads; requires Event to be set.
+	// manual:        human triggers via Mayor Bead.
+	Type     string `toml:"type"     json:"type"               validate:"required,oneof=bead_assigned schedule event manual"`
+	Schedule string `toml:"schedule" json:"schedule,omitempty" validate:"omitempty,cron"`
+	Event    string `toml:"event"    json:"event,omitempty"`
+}
+
+// RoleSupervision declares where this role sits in the Gas Town agent hierarchy.
+type RoleSupervision struct {
+	// Parent is the built-in or custom role that supervises this one.
+	// Required — every role must have a supervisor (ADR-0004, Decision 3).
+	Parent    string `toml:"parent"     json:"parent"               validate:"required"`
+	// ReportsTo is the escalation target. Defaults to Parent if empty.
+	ReportsTo string `toml:"reports_to" json:"reports_to,omitempty"`
+}
+
+// RoleResources constrains the number of instances that can run simultaneously.
+type RoleResources struct {
+	// MaxInstances sets the capacity ceiling. Default 1.
+	MaxInstances int `toml:"max_instances" json:"max_instances,omitempty" validate:"omitempty,min=1"`
 }

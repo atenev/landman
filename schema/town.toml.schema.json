@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/tenev/dgt/schema/town.toml.schema.json",
   "title": "GasTown town.toml manifest",
-  "description": "Declarative topology manifest for a Gas Town instance (ADR-0001). Parsed by town-ctl and written to Dolt desired_topology tables.",
+  "description": "Declarative topology manifest for a Gas Town instance (ADR-0001, ADR-0004). Parsed by town-ctl and written to Dolt desired_topology tables.",
   "type": "object",
   "required": ["version", "town"],
   "additionalProperties": false,
@@ -31,6 +31,12 @@
       "type": "array",
       "items": { "$ref": "#/$defs/RigSpec" },
       "description": "Array of rig definitions. Each rig is a Git repository + agent pool.",
+      "default": []
+    },
+    "role": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/RoleSpec" },
+      "description": "Global custom agent role definitions (ADR-0004). Roles are defined once here and opted into per-rig via [rig.agents].roles.",
       "default": []
     }
   },
@@ -190,6 +196,12 @@
         "mayor_claude_md": {
           "type": "string",
           "description": "Path to the Mayor's CLAUDE.md for this rig. Supports ${VAR} interpolation."
+        },
+        "roles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Names of custom [[role]] entries to activate on this rig. Each name must match a globally defined [[role]] with scope=\"rig\". Town-scoped roles need no entry here.",
+          "default": []
         }
       }
     },
@@ -207,6 +219,113 @@
           "type": "string",
           "pattern": "^(\\*|[0-9,\\-\\*\\/]+) (\\*|[0-9,\\-\\*\\/]+) (\\*|[0-9,\\-\\*\\/]+) (\\*|[0-9,\\-\\*\\/]+) (\\*|[0-9,\\-\\*\\/]+)$",
           "description": "Cron schedule expression (5-field: min hour dom mon dow), e.g. \"0 2 * * *\"."
+        }
+      }
+    },
+    "RoleSpec": {
+      "type": "object",
+      "required": ["name", "scope", "identity", "trigger", "supervision"],
+      "additionalProperties": false,
+      "description": "A custom agent role definition (ADR-0004). Stored in desired_custom_roles. Must not shadow a built-in role name (mayor, polecat, witness, refinery, deacon, dog, crew).",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "Unique slug identifier. Must not equal a built-in role name."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what this role does."
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["rig", "town"],
+          "description": "rig: per-rig opt-in required via [rig.agents].roles. town: active on every rig automatically."
+        },
+        "lifespan": {
+          "type": "string",
+          "enum": ["ephemeral", "persistent"],
+          "default": "ephemeral",
+          "description": "ephemeral: spawned per task, exits when done. persistent: long-lived process."
+        },
+        "identity": {
+          "$ref": "#/$defs/RoleIdentity"
+        },
+        "trigger": {
+          "$ref": "#/$defs/RoleTrigger"
+        },
+        "supervision": {
+          "$ref": "#/$defs/RoleSupervision"
+        },
+        "resources": {
+          "$ref": "#/$defs/RoleResources"
+        }
+      }
+    },
+    "RoleIdentity": {
+      "type": "object",
+      "required": ["claude_md"],
+      "additionalProperties": false,
+      "description": "How the role presents itself as a Claude Code agent. Inline CLAUDE.md content is not supported — a file path is required (ADR-0004, Decision 2).",
+      "properties": {
+        "claude_md": {
+          "type": "string",
+          "description": "Path to this role's CLAUDE.md file. Must resolve at apply time. Supports ${VAR} interpolation."
+        },
+        "model": {
+          "type": "string",
+          "description": "Claude model ID for this role. Inherits from rig defaults if omitted."
+        }
+      }
+    },
+    "RoleTrigger": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "description": "When a custom role agent is spawned. Cross-field constraint: schedule requires trigger.schedule; event requires trigger.event.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["bead_assigned", "schedule", "event", "manual"],
+          "description": "bead_assigned: wakes when a Bead with assignee=<role-name> appears. schedule: cron-driven. event: CLAUDE.md polls for event Beads. manual: human triggers via Mayor Bead."
+        },
+        "schedule": {
+          "type": "string",
+          "pattern": "^(\\*|[0-9,\\-\\*\\/]+) (\\*|[0-9,\\-\\*\\/]+) (\\*|[0-9,\\-\\*\\/]+) (\\*|[0-9,\\-\\*\\/]+) (\\*|[0-9,\\-\\*\\/]+)$",
+          "description": "Cron schedule. Required when type=schedule."
+        },
+        "event": {
+          "type": "string",
+          "description": "Event name to poll for (e.g. \"pr-opened\"). Required when type=event."
+        }
+      }
+    },
+    "RoleSupervision": {
+      "type": "object",
+      "required": ["parent"],
+      "additionalProperties": false,
+      "description": "Where this role sits in the Gas Town agent hierarchy. Every custom role must declare a supervisor (ADR-0004, Decision 3).",
+      "properties": {
+        "parent": {
+          "type": "string",
+          "description": "The built-in or custom role that supervises this one."
+        },
+        "reports_to": {
+          "type": "string",
+          "description": "Escalation target role. Defaults to parent if omitted."
+        }
+      }
+    },
+    "RoleResources": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Resource constraints for this role.",
+      "properties": {
+        "max_instances": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Maximum number of simultaneous instances of this role. Default 1."
         }
       }
     }
