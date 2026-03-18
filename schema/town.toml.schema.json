@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tenev/dgt/schema/town.toml.schema.json",
+  "title": "GasTown town.toml manifest",
+  "description": "Declarative topology manifest for a Gas Town instance (ADR-0001). Parsed by town-ctl and written to Dolt desired_topology tables.",
+  "type": "object",
+  "required": ["version", "town"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1",
+      "description": "Manifest format version. town-ctl refuses to apply an unknown version."
+    },
+    "town": {
+      "$ref": "#/$defs/TownConfig"
+    },
+    "defaults": {
+      "$ref": "#/$defs/RigDefaults"
+    },
+    "secrets": {
+      "$ref": "#/$defs/SecretsConfig"
+    },
+    "includes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Glob patterns for per-rig TOML fragments resolved before Dolt write. Merge semantics defined in dgt-cfi.",
+      "default": []
+    },
+    "rig": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/RigSpec" },
+      "description": "Array of rig definitions. Each rig is a Git repository + agent pool.",
+      "default": []
+    }
+  },
+  "$defs": {
+    "TownConfig": {
+      "type": "object",
+      "required": ["name", "home"],
+      "additionalProperties": false,
+      "description": "Gas Town instance configuration.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "Unique slug identifier for this Gas Town instance."
+        },
+        "home": {
+          "type": "string",
+          "description": "Path to the Gas Town home directory. Supports ${VAR} interpolation."
+        },
+        "dolt_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 3306,
+          "description": "TCP port Dolt listens on."
+        },
+        "agents": {
+          "$ref": "#/$defs/TownAgents"
+        }
+      }
+    },
+    "TownAgents": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Gas Town-level agents that run alongside gt.",
+      "properties": {
+        "surveyor": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the Surveyor topology reconciler (ADR-0002)."
+        }
+      }
+    },
+    "RigDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Default values inherited by every rig unless overridden.",
+      "properties": {
+        "mayor_model": {
+          "type": "string",
+          "default": "claude-opus-4-6",
+          "description": "Default Claude model ID for Mayor agents."
+        },
+        "polecat_model": {
+          "type": "string",
+          "default": "claude-sonnet-4-6",
+          "description": "Default Claude model ID for Polecat agents."
+        },
+        "max_polecats": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30,
+          "default": 20,
+          "description": "Default maximum Polecat pool size per rig."
+        }
+      }
+    },
+    "SecretsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Secrets resolved by town-ctl at apply time. Values are env-var interpolation expressions. Never written to Dolt (ADR-0001, Decision 4).",
+      "properties": {
+        "anthropic_api_key": {
+          "type": "string",
+          "description": "Anthropic API key reference, e.g. \"${ANTHROPIC_API_KEY}\"."
+        },
+        "github_token": {
+          "type": "string",
+          "description": "GitHub token reference, e.g. \"${GITHUB_TOKEN}\"."
+        },
+        "file": {
+          "type": "string",
+          "description": "Path to an external secrets TOML file (gitignored). Supports ${VAR} interpolation."
+        }
+      }
+    },
+    "RigSpec": {
+      "type": "object",
+      "required": ["name", "repo", "branch"],
+      "additionalProperties": false,
+      "description": "A single Gas Town rig: one Git repository and its agent pool.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "Unique slug identifier for this rig. Used as the primary key in desired_rigs."
+        },
+        "repo": {
+          "type": "string",
+          "description": "Absolute path to the Git repository root. Supports ${VAR} interpolation."
+        },
+        "branch": {
+          "type": "string",
+          "description": "Default branch for agent worktrees."
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this rig is active. A disabled rig causes the Surveyor to drain and stop all its agents."
+        },
+        "agents": {
+          "$ref": "#/$defs/AgentConfig"
+        },
+        "formula": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FormulaRef" },
+          "description": "Scheduled Formula workflows for this rig.",
+          "default": []
+        }
+      }
+    },
+    "AgentConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Agent role configuration for a rig. Absence of a role field means that role is disabled. Role interdependency: witness=true requires mayor=true.",
+      "properties": {
+        "mayor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Mayor agent (long-lived human interface)."
+        },
+        "witness": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Witness agent (Polecat supervisor). Requires mayor=true."
+        },
+        "refinery": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Refinery agent (merge queue, conflict resolution)."
+        },
+        "deacon": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Deacon agent (health daemon, coordinates Dogs)."
+        },
+        "max_polecats": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30,
+          "description": "Override [defaults].max_polecats for this rig."
+        },
+        "polecat_model": {
+          "type": "string",
+          "description": "Override [defaults].polecat_model for this rig."
+        },
+        "mayor_claude_md": {
+          "type": "string",
+          "description": "Path to the Mayor's CLAUDE.md for this rig. Supports ${VAR} interpolation."
+        }
+      }
+    },
+    "FormulaRef": {
+      "type": "object",
+      "required": ["name", "schedule"],
+      "additionalProperties": false,
+      "description": "A scheduled Formula workflow attached to a rig.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Formula name, unique within the rig."
+        },
+        "schedule": {
+          "type": "string",
+          "pattern": "^(\\*|[0-9,\\-\\*\\/]+) (\\*|[0-9,\\-\\*\\/]+) (\\*|[0-9,\\-\\*\\/]+) (\\*|[0-9,\\-\\*\\/]+) (\\*|[0-9,\\-\\*\\/]+)$",
+          "description": "Cron schedule expression (5-field: min hour dom mon dow), e.g. \"0 2 * * *\"."
+        }
+      }
+    }
+  }
+}
