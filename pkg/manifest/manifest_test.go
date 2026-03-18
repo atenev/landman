@@ -442,3 +442,138 @@ branch = "main"
 		t.Errorf("resources.max_instances = %d, want 2", r.Resources.MaxInstances)
 	}
 }
+
+// ── CostPolicy tests (dgt-doh) ────────────────────────────────────────────────
+
+func TestParse_CostPolicy_ValidUSD(t *testing.T) {
+	good := minimalValid + `
+  [rig.cost]
+  daily_budget_usd = 50.0
+  warn_at_pct      = 75
+`
+	m, err := manifest.Parse([]byte(good))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	c := m.Rigs[0].Cost
+	if c.DailyBudgetUSD == nil || *c.DailyBudgetUSD != 50.0 {
+		t.Errorf("daily_budget_usd = %v, want 50.0", c.DailyBudgetUSD)
+	}
+	if c.WarnAtPct == nil || *c.WarnAtPct != 75 {
+		t.Errorf("warn_at_pct = %v, want 75", c.WarnAtPct)
+	}
+}
+
+func TestParse_CostPolicy_ValidMessages(t *testing.T) {
+	good := minimalValid + `
+  [rig.cost]
+  daily_budget_messages = 500
+`
+	m, err := manifest.Parse([]byte(good))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	c := m.Rigs[0].Cost
+	if c.DailyBudgetMessages == nil || *c.DailyBudgetMessages != 500 {
+		t.Errorf("daily_budget_messages = %v, want 500", c.DailyBudgetMessages)
+	}
+}
+
+func TestParse_CostPolicy_ValidTokens(t *testing.T) {
+	good := minimalValid + `
+  [rig.cost]
+  daily_budget_tokens = 1000000
+`
+	m, err := manifest.Parse([]byte(good))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	c := m.Rigs[0].Cost
+	if c.DailyBudgetTokens == nil || *c.DailyBudgetTokens != 1_000_000 {
+		t.Errorf("daily_budget_tokens = %v, want 1000000", c.DailyBudgetTokens)
+	}
+}
+
+func TestParse_CostPolicy_DefaultsCost(t *testing.T) {
+	good := `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+[defaults.cost]
+daily_budget_usd = 200.0
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`
+	m, err := manifest.Parse([]byte(good))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Defaults.Cost.DailyBudgetUSD == nil || *m.Defaults.Cost.DailyBudgetUSD != 200.0 {
+		t.Errorf("defaults.cost.daily_budget_usd = %v, want 200.0", m.Defaults.Cost.DailyBudgetUSD)
+	}
+}
+
+func TestParse_CostPolicy_MutualExclusionRejected(t *testing.T) {
+	bad := minimalValid + `
+  [rig.cost]
+  daily_budget_usd      = 50.0
+  daily_budget_messages = 500
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for two budget fields set, got nil")
+	}
+}
+
+func TestParse_CostPolicy_NoBudgetRejected(t *testing.T) {
+	bad := minimalValid + `
+  [rig.cost]
+  warn_at_pct = 75
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for cost block with no budget field, got nil")
+	}
+}
+
+func TestParse_CostPolicy_WarnAtPctZeroRejected(t *testing.T) {
+	bad := minimalValid + `
+  [rig.cost]
+  daily_budget_usd = 50.0
+  warn_at_pct      = 0
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for warn_at_pct=0, got nil")
+	}
+}
+
+func TestParse_CostPolicy_WarnAtPct100Rejected(t *testing.T) {
+	bad := minimalValid + `
+  [rig.cost]
+  daily_budget_usd = 50.0
+  warn_at_pct      = 100
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for warn_at_pct=100, got nil")
+	}
+}
+
+func TestParse_CostPolicy_ZeroUSDRejected(t *testing.T) {
+	bad := minimalValid + `
+  [rig.cost]
+  daily_budget_usd = 0.0
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for daily_budget_usd=0, got nil")
+	}
+}
+
+func TestParse_CostPolicy_AbsentIsOK(t *testing.T) {
+	if _, err := manifest.Parse([]byte(minimalValid)); err != nil {
+		t.Fatalf("unexpected error for manifest with no cost block: %v", err)
+	}
+}

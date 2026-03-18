@@ -48,6 +48,9 @@ type RigDefaults struct {
 	MayorModel   string `toml:"mayor_model"   json:"mayor_model"`
 	PolekatModel string `toml:"polecat_model" json:"polecat_model"`
 	MaxPolecats  int    `toml:"max_polecats"  json:"max_polecats"  validate:"lte=30"`
+	// Cost is the default daily budget policy inherited by every rig that has no
+	// explicit [rig.cost] block. Cross-field validation in crossValidate.
+	Cost CostPolicy `toml:"cost" json:"cost,omitempty"`
 }
 
 // SecretsConfig holds references to secrets resolved by town-ctl at apply time.
@@ -72,6 +75,9 @@ type RigSpec struct {
 	Agents  AgentConfig `toml:"agents"  json:"agents"`
 	// Formulas lists scheduled Formula definitions for this rig.
 	Formulas []FormulaRef `toml:"formula" json:"formula" validate:"dive"`
+	// Cost is the per-rig daily budget policy (overrides [defaults.cost]).
+	// Cross-field validation in crossValidate.
+	Cost CostPolicy `toml:"cost" json:"cost,omitempty"`
 }
 
 // AgentConfig specifies which agent roles are active on a rig and their
@@ -157,4 +163,31 @@ type RoleSupervision struct {
 type RoleResources struct {
 	// MaxInstances sets the capacity ceiling. Default 1.
 	MaxInstances int `toml:"max_instances" json:"max_instances,omitempty" validate:"omitempty,min=1"`
+}
+
+// CostPolicy defines a daily spend limit for a rig or as a global default (ADR-0006).
+//
+// Exactly one of DailyBudgetUSD, DailyBudgetMessages, or DailyBudgetTokens must be
+// set when the cost block is present. If all three are nil the block is considered
+// absent. Cross-field mutual-exclusion validation is in crossValidate.
+//
+// Pointer fields distinguish "not set" from "set to zero".
+type CostPolicy struct {
+	// DailyBudgetUSD is the maximum daily cost in US dollars. Must be > 0.
+	DailyBudgetUSD *float64 `toml:"daily_budget_usd"      json:"daily_budget_usd,omitempty"      validate:"omitempty,gt=0"`
+	// DailyBudgetMessages is the maximum daily Claude API message count. Must be >= 1.
+	DailyBudgetMessages *int64 `toml:"daily_budget_messages" json:"daily_budget_messages,omitempty" validate:"omitempty,min=1"`
+	// DailyBudgetTokens is the maximum daily token count (input + output). Must be >= 1.
+	DailyBudgetTokens *int64 `toml:"daily_budget_tokens"   json:"daily_budget_tokens,omitempty"   validate:"omitempty,min=1"`
+	// WarnAtPct triggers a warning when budget usage reaches this percentage (1–99).
+	// Defaults to 80 at apply time when the cost block is present and warn_at_pct is unset.
+	WarnAtPct *int `toml:"warn_at_pct" json:"warn_at_pct,omitempty" validate:"omitempty,min=1,max=99"`
+}
+
+// isEmpty reports whether the CostPolicy has no fields set (block was absent in TOML).
+func (c CostPolicy) isEmpty() bool {
+	return c.DailyBudgetUSD == nil &&
+		c.DailyBudgetMessages == nil &&
+		c.DailyBudgetTokens == nil &&
+		c.WarnAtPct == nil
 }

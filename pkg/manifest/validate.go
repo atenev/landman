@@ -3,6 +3,7 @@ package manifest
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/go-playground/validator/v10"
 	toml "github.com/pelletier/go-toml/v2"
@@ -28,6 +29,7 @@ var builtinRoles = map[string]struct{}{
 //   - witness=true requires mayor=true
 //   - max_polecats <= 30
 //   - formula schedules must be valid 5-field cron expressions
+//   - cost policy: exactly one budget field when block is present; warn_at_pct in [1,99]
 //   - role names must not shadow built-in role names
 //   - role names must be unique
 //   - trigger.type=schedule requires trigger.schedule
@@ -86,6 +88,20 @@ func crossValidate(m *TownManifest) error {
 		}
 	}
 
+	// --- Cost policy validation (ADR-0006) ---
+	if !m.Defaults.Cost.isEmpty() {
+		if err := validateCostPolicy(m.Defaults.Cost, "[defaults.cost]"); err != nil {
+			return err
+		}
+	}
+	for _, rig := range m.Rigs {
+		if !rig.Cost.isEmpty() {
+			if err := validateCostPolicy(rig.Cost, fmt.Sprintf("[rig.%s.cost]", rig.Name)); err != nil {
+				return err
+			}
+		}
+	}
+
 	// --- Custom role checks (ADR-0004) ---
 	seenRole := make(map[string]struct{}, len(m.Roles))
 	for i, role := range m.Roles {
@@ -121,5 +137,30 @@ func crossValidate(m *TownManifest) error {
 		}
 	}
 
+	return nil
+}
+
+// validateCostPolicy checks mutual exclusion of budget fields and warn_at_pct range.
+func validateCostPolicy(c CostPolicy, ctx string) error {
+	var setFields []string
+	if c.DailyBudgetUSD != nil {
+		setFields = append(setFields, "daily_budget_usd")
+	}
+	if c.DailyBudgetMessages != nil {
+		setFields = append(setFields, "daily_budget_messages")
+	}
+	if c.DailyBudgetTokens != nil {
+		setFields = append(setFields, "daily_budget_tokens")
+	}
+
+	switch len(setFields) {
+	case 0:
+		return fmt.Errorf("%s declares no budget. At least one of daily_budget_usd, daily_budget_messages, daily_budget_tokens is required.", ctx)
+	case 1:
+		// Valid.
+	default:
+		return fmt.Errorf("%s sets both %s and %s. Exactly one budget type may be set per cost policy block.",
+			ctx, setFields[0], strings.Join(setFields[1:], " and "))
+	}
 	return nil
 }
