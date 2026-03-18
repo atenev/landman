@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -32,9 +33,12 @@ var builtinRoles = map[string]struct{}{
 //   - cost policy: exactly one budget field when block is present; warn_at_pct in [1,99]
 //   - role names must not shadow built-in role names
 //   - role names must be unique
-//   - trigger.type=schedule requires trigger.schedule
+//   - trigger.type=schedule requires trigger.schedule (valid cron)
 //   - trigger.type=event requires trigger.event
-//   - rig.agents.roles entries must reference a defined [[role]] name
+//   - supervision.parent must reference a built-in or defined custom role
+//   - supervision.reports_to (if set) must reference a built-in or defined custom role
+//   - rig.agents.roles entries must reference a defined [[role]] name with scope=rig
+//   - town-scoped roles may not be opted into per rig
 func Parse(data []byte) (*TownManifest, error) {
 	var m TownManifest
 	if err := toml.Unmarshal(data, &m); err != nil {
@@ -103,18 +107,35 @@ func crossValidate(m *TownManifest) error {
 	}
 
 	// --- Custom role checks (ADR-0004) ---
-	seenRole := make(map[string]struct{}, len(m.Roles))
+
+	// Pass 1: collect role names and check for duplicates and built-in shadowing.
+	// Two-pass approach ensures forward references in parent/reports_to are valid.
+	roleNames := make(map[string]struct{}, len(m.Roles))
+	roleScopeByName := make(map[string]string, len(m.Roles))
 	for i, role := range m.Roles {
-		// Must not shadow a built-in role.
+		// Must not shadow a built-in role (ADR-0004, Decision 4).
 		if _, builtin := builtinRoles[role.Name]; builtin {
-			return fmt.Errorf("role[%d]: name %q shadows a built-in role — choose a different name", i, role.Name)
+			return fmt.Errorf("[role.name] %q shadows a built-in Gas Town role", role.Name)
 		}
 		// Must be unique within the manifest.
-		if _, dup := seenRole[role.Name]; dup {
+		if _, dup := roleNames[role.Name]; dup {
 			return fmt.Errorf("role[%d]: duplicate role name %q", i, role.Name)
 		}
-		seenRole[role.Name] = struct{}{}
+		roleNames[role.Name] = struct{}{}
+		roleScopeByName[role.Name] = role.Scope
+	}
 
+	// allKnownRoles includes built-ins so parent/reports_to may reference them.
+	allKnownRoles := make(map[string]struct{}, len(roleNames)+len(builtinRoles))
+	for name := range builtinRoles {
+		allKnownRoles[name] = struct{}{}
+	}
+	for name := range roleNames {
+		allKnownRoles[name] = struct{}{}
+	}
+
+	// Pass 2: per-role cross-field checks that require the complete role set.
+	for _, role := range m.Roles {
 		// Trigger cross-field rules.
 		switch role.Trigger.Type {
 		case "schedule":
@@ -126,17 +147,55 @@ func crossValidate(m *TownManifest) error {
 				return fmt.Errorf("role %q: trigger.type=event requires trigger.event", role.Name)
 			}
 		}
+
+		// Supervision parent must be a known role (built-in or custom).
+		if _, ok := allKnownRoles[role.Supervision.Parent]; !ok {
+			return fmt.Errorf("[role.%s.supervision.parent] unknown role: %q", role.Name, role.Supervision.Parent)
+		}
+		// reports_to is optional; if set, must also be a known role.
+		if role.Supervision.ReportsTo != "" {
+			if _, ok := allKnownRoles[role.Supervision.ReportsTo]; !ok {
+				return fmt.Errorf("[role.%s.supervision.reports_to] unknown role: %q", role.Name, role.Supervision.ReportsTo)
+			}
+		}
 	}
 
 	// --- Rig role reference checks ---
 	for _, rig := range m.Rigs {
 		for _, ref := range rig.Agents.Roles {
-			if _, defined := seenRole[ref]; !defined {
-				return fmt.Errorf("rig %q: agents.roles references undefined role %q", rig.Name, ref)
+			if _, defined := roleNames[ref]; !defined {
+				return fmt.Errorf("[rig.%s.agents.roles] unknown role: %q", rig.Name, ref)
+			}
+			// Town-scoped roles are active globally and must not be opted in per rig.
+			if roleScopeByName[ref] == "town" {
+				return fmt.Errorf("[rig.%s.agents.roles] role %q is town-scoped and cannot be opted in per rig", rig.Name, ref)
 			}
 		}
 	}
 
+	return nil
+}
+
+// ValidateApplyTime runs filesystem checks that must succeed before any Dolt
+// write. It expands ${VAR} references in claude_md paths using os.ExpandEnv.
+// For testing, use ValidateApplyTimeFS with a stub stat function.
+func ValidateApplyTime(m *TownManifest) error {
+	return ValidateApplyTimeFS(m, func(path string) error {
+		_, err := os.Stat(path)
+		return err
+	})
+}
+
+// ValidateApplyTimeFS is the testable variant of ValidateApplyTime.
+// The stat argument is called for each resolved claude_md path; return a
+// non-nil error to signal that the path does not exist.
+func ValidateApplyTimeFS(m *TownManifest, stat func(string) error) error {
+	for _, role := range m.Roles {
+		path := os.ExpandEnv(role.Identity.ClaudeMD)
+		if err := stat(path); err != nil {
+			return fmt.Errorf("[role.%s.identity.claude_md] path not found: %s", role.Name, path)
+		}
+	}
 	return nil
 }
 

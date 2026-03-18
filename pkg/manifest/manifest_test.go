@@ -1,6 +1,7 @@
 package manifest_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -634,5 +635,279 @@ branch = "main"
 `
 	if _, err := manifest.Parse([]byte(bad)); err == nil {
 		t.Fatal("expected error for patrol_interval_seconds=5 (< min 10), got nil")
+	}
+}
+
+// ── Role supervision and scope tests (ADR-0004, dgt-69d) ─────────────────────
+
+func TestParse_Role_UnknownParent(t *testing.T) {
+	bad := roleBase + `
+[[role]]
+name  = "reviewer"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/reviewer/CLAUDE.md"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "nonexistent-supervisor"
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`
+	_, err := manifest.Parse([]byte(bad))
+	if err == nil {
+		t.Fatal("expected error for unknown parent role, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonexistent-supervisor") {
+		t.Errorf("error should mention unknown role name, got: %v", err)
+	}
+}
+
+func TestParse_Role_UnknownReportsTo(t *testing.T) {
+	bad := roleBase + `
+[[role]]
+name  = "reviewer"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/reviewer/CLAUDE.md"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent     = "witness"
+  reports_to = "nonexistent-escalation"
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`
+	_, err := manifest.Parse([]byte(bad))
+	if err == nil {
+		t.Fatal("expected error for unknown reports_to role, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonexistent-escalation") {
+		t.Errorf("error should mention unknown role name, got: %v", err)
+	}
+}
+
+func TestParse_Role_CustomRoleAsParent(t *testing.T) {
+	// A custom role may be the parent of another custom role.
+	good := roleBase + `
+[[role]]
+name  = "senior-reviewer"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/senior-reviewer/CLAUDE.md"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+
+[[role]]
+name  = "junior-reviewer"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/junior-reviewer/CLAUDE.md"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "senior-reviewer"
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`
+	if _, err := manifest.Parse([]byte(good)); err != nil {
+		t.Fatalf("unexpected error for custom parent role: %v", err)
+	}
+}
+
+func TestParse_Role_ForwardReferenceParent(t *testing.T) {
+	// parent references a role declared later in the file — must not error.
+	good := roleBase + `
+[[role]]
+name  = "junior-reviewer"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/junior-reviewer/CLAUDE.md"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "senior-reviewer"
+
+[[role]]
+name  = "senior-reviewer"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/senior-reviewer/CLAUDE.md"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`
+	if _, err := manifest.Parse([]byte(good)); err != nil {
+		t.Fatalf("unexpected error for forward-reference parent: %v", err)
+	}
+}
+
+func TestParse_Role_TownScopedInRigRolesRejected(t *testing.T) {
+	bad := roleBase + `
+[[role]]
+name  = "planner"
+scope = "town"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/planner/CLAUDE.md"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "mayor"
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+
+  [rig.agents]
+  roles = ["planner"]
+`
+	_, err := manifest.Parse([]byte(bad))
+	if err == nil {
+		t.Fatal("expected error for town-scoped role in rig.agents.roles, got nil")
+	}
+	if !strings.Contains(err.Error(), "town-scoped") {
+		t.Errorf("error should mention town-scoped, got: %v", err)
+	}
+}
+
+func TestParse_Role_TownScopedWithoutRigOptIn(t *testing.T) {
+	// Town-scoped roles do not require rig opt-in — no error expected.
+	good := roleBase + `
+[[role]]
+name  = "planner"
+scope = "town"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/planner/CLAUDE.md"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "mayor"
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`
+	if _, err := manifest.Parse([]byte(good)); err != nil {
+		t.Fatalf("unexpected error for town-scoped role without rig opt-in: %v", err)
+	}
+}
+
+// ── ValidateApplyTime tests (ADR-0004, dgt-69d) ───────────────────────────────
+
+func TestValidateApplyTime_ClaudeMDExists(t *testing.T) {
+	m, err := manifest.Parse([]byte(roleBase + `
+[[role]]
+name  = "reviewer"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/tmp/reviewer-claude.md"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	existsStat := func(path string) error { return nil }
+	if err := manifest.ValidateApplyTimeFS(m, existsStat); err != nil {
+		t.Fatalf("unexpected error when all paths exist: %v", err)
+	}
+}
+
+func TestValidateApplyTime_ClaudeMDNotFound(t *testing.T) {
+	m, err := manifest.Parse([]byte(roleBase + `
+[[role]]
+name  = "reviewer"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/reviewer/CLAUDE.md"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	missingErr := fmt.Errorf("no such file")
+	missingStat := func(path string) error { return missingErr }
+	applyErr := manifest.ValidateApplyTimeFS(m, missingStat)
+	if applyErr == nil {
+		t.Fatal("expected error for missing claude_md path, got nil")
+	}
+	if !strings.Contains(applyErr.Error(), "path not found") {
+		t.Errorf("error should mention 'path not found', got: %v", applyErr)
+	}
+}
+
+func TestValidateApplyTime_NoRoles(t *testing.T) {
+	m, err := manifest.Parse([]byte(minimalValid))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if err := manifest.ValidateApplyTime(m); err != nil {
+		t.Fatalf("ValidateApplyTime should succeed with no roles: %v", err)
 	}
 }
