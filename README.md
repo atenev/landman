@@ -4,7 +4,7 @@
 > — define your entire multi-agent AI orchestrator as code.
 
 > [!NOTE]
-> This project is developed **entirely by AI agents** using the Gas Town + Beads workflow.
+> This project is developed **entirely by AI agents**.
 > Every design decision, spec, and line of code is authored by Claude Code instances
 > coordinated through the primitives this project itself documents.
 
