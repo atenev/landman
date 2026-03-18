@@ -89,13 +89,13 @@ func crossValidate(m *TownManifest) error {
 	}
 
 	// --- Cost policy validation (ADR-0006) ---
-	if !m.Defaults.Cost.isEmpty() {
+	if !m.Defaults.Cost.IsEmpty() {
 		if err := validateCostPolicy(m.Defaults.Cost, "[defaults.cost]"); err != nil {
 			return err
 		}
 	}
 	for _, rig := range m.Rigs {
-		if !rig.Cost.isEmpty() {
+		if !rig.Cost.IsEmpty() {
 			if err := validateCostPolicy(rig.Cost, fmt.Sprintf("[rig.%s.cost]", rig.Name)); err != nil {
 				return err
 			}

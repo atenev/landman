@@ -577,3 +577,62 @@ func TestParse_CostPolicy_AbsentIsOK(t *testing.T) {
 		t.Fatalf("unexpected error for manifest with no cost block: %v", err)
 	}
 }
+
+// ── TownCostConfig tests (dgt-jw4) ───────────────────────────────────────────
+
+func TestParse_TownCost_DefaultPatrolInterval(t *testing.T) {
+	// No [town.cost] block → PatrolIntervalSeconds is 0 (caller uses default 300).
+	m, err := manifest.Parse([]byte(minimalValid))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Town.Cost.PatrolIntervalSeconds != 0 {
+		t.Errorf("PatrolIntervalSeconds = %d, want 0 (default)", m.Town.Cost.PatrolIntervalSeconds)
+	}
+}
+
+func TestParse_TownCost_CustomPatrolInterval(t *testing.T) {
+	good := `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+  [town.cost]
+  patrol_interval_seconds = 60
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`
+	m, err := manifest.Parse([]byte(good))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Town.Cost.PatrolIntervalSeconds != 60 {
+		t.Errorf("PatrolIntervalSeconds = %d, want 60", m.Town.Cost.PatrolIntervalSeconds)
+	}
+}
+
+func TestParse_TownCost_PatrolIntervalTooSmall(t *testing.T) {
+	bad := `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+  [town.cost]
+  patrol_interval_seconds = 5
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for patrol_interval_seconds=5 (< min 10), got nil")
+	}
+}

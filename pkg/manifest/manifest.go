@@ -30,10 +30,21 @@ type TownManifest struct {
 
 // TownConfig describes the Gas Town instance itself.
 type TownConfig struct {
-	Name     string      `toml:"name"      json:"name"      validate:"required,slug"`
-	Home     string      `toml:"home"      json:"home"      validate:"required"`
-	DoltPort int         `toml:"dolt_port" json:"dolt_port" validate:"omitempty,min=1,max=65535"`
-	Agents   TownAgents  `toml:"agents"    json:"agents"`
+	Name     string         `toml:"name"      json:"name"      validate:"required,slug"`
+	Home     string         `toml:"home"      json:"home"      validate:"required"`
+	DoltPort int            `toml:"dolt_port" json:"dolt_port" validate:"omitempty,min=1,max=65535"`
+	Agents   TownAgents     `toml:"agents"    json:"agents"`
+	// Cost configures town-level operational cost controls (ADR-0006).
+	Cost     TownCostConfig `toml:"cost"      json:"cost,omitempty"`
+}
+
+// TownCostConfig holds town-level operational parameters for cost enforcement.
+// These control Deacon's cost patrol behaviour, not the spend limits themselves
+// (which are declared in [rig.cost] and [defaults.cost]).
+type TownCostConfig struct {
+	// PatrolIntervalSeconds is how often Deacon runs the cost patrol query.
+	// Must be >= 10 when set. Defaults to 300 (5 minutes) if 0 or unset.
+	PatrolIntervalSeconds int `toml:"patrol_interval_seconds" json:"patrol_interval_seconds,omitempty" validate:"omitempty,min=10"`
 }
 
 // TownAgents declares which Gas Town-level agents should run alongside gt.
@@ -184,8 +195,8 @@ type CostPolicy struct {
 	WarnAtPct *int `toml:"warn_at_pct" json:"warn_at_pct,omitempty" validate:"omitempty,min=1,max=99"`
 }
 
-// isEmpty reports whether the CostPolicy has no fields set (block was absent in TOML).
-func (c CostPolicy) isEmpty() bool {
+// IsEmpty reports whether the CostPolicy has no fields set (block was absent in TOML).
+func (c CostPolicy) IsEmpty() bool {
 	return c.DailyBudgetUSD == nil &&
 		c.DailyBudgetMessages == nil &&
 		c.DailyBudgetTokens == nil &&
