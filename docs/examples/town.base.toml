@@ -1,0 +1,53 @@
+# Environment-specific overlay pattern — BASE file.
+#
+# This file (town.base.toml) is the environment-agnostic base. It declares
+# the full rig topology but leaves environment-specific values (models, budgets,
+# paths) to be supplied by an overlay file (e.g. town.prod.toml).
+#
+# Apply in development:    town-ctl apply town.base.toml
+# Apply in production:     town-ctl apply town.base.toml --overlay town.prod.toml
+#
+# Overlay semantics (ADR-0001, → dgt-cfi for full merge spec):
+#   - Scalar fields: overlay wins (last-write semantics)
+#   - Array fields (e.g. includes, [[rig]]): overlay REPLACES the base array,
+#     it does not append. Define all rigs you want in the overlay if you extend them.
+#   - Missing keys in the overlay: base value is retained.
+#
+# The [secrets] block is NEVER included in overlay files — env vars are
+# resolved independently at apply time.
+
+version = "1"
+
+[town]
+name      = "my-town"
+home      = "/opt/gt"
+dolt_port = 3306
+
+[town.agents]
+surveyor = false   # disabled in base; enabled in production overlay
+
+# includes lists relative glob patterns for per-rig TOML fragments. These are
+# resolved and merged before the Dolt write. Useful for splitting large configs
+# across files by rig.
+includes = ["./rigs/*.toml"]
+
+[defaults]
+mayor_model   = "claude-sonnet-4-6"   # conservative default; production overrides to opus
+polecat_model = "claude-haiku-4-5-20251001"
+max_polecats  = 5                      # tight limit in base (dev environment)
+
+[secrets]
+anthropic_api_key = "${ANTHROPIC_API_KEY}"
+github_token      = "${GITHUB_TOKEN}"
+
+[[rig]]
+name    = "backend"
+repo    = "/srv/repos/backend"
+branch  = "main"
+enabled = true
+
+[rig.agents]
+mayor    = true
+witness  = true
+refinery = true
+deacon   = true

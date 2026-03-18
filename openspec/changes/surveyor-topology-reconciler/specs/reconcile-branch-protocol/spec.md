@@ -61,3 +61,66 @@ If the lock is stale (older than TTL), it SHALL claim it and proceed.
 #### Scenario: Stale lock claimed
 - **WHEN** a `surveyor_lock` row exists but is older than TTL
 - **THEN** the Surveyor overwrites the lock and proceeds with reconcile
+
+### Requirement: Stale-branch TTL default is 30 minutes; lock TTL default is 15 minutes
+The stale-branch TTL (time after which an open `reconcile/*` branch is presumed from a crashed
+Surveyor) SHALL default to 30 minutes. The advisory-lock TTL SHALL default to 15 minutes.
+Both values SHALL be overridable via the Surveyor's `CLAUDE.md` configuration block.
+
+Rationale for defaults: a reconcile involving a slow drain of 30 Polecats may take 10–20 minutes
+end-to-end. 30 minutes gives headroom for legitimate long reconciles while ensuring a genuinely
+crashed Surveyor is detected within one reconcile cycle. The lock TTL is shorter because a live
+Surveyor refreshes the lock at each reconcile stage; a 15-minute dead lock is unambiguously stale.
+
+#### Scenario: TTL default is respected
+- **WHEN** no TTL override is configured and a branch timestamp is 31 minutes old
+- **THEN** the Surveyor treats it as stale and abandons it with reason `surveyor-crash`
+
+#### Scenario: TTL override is respected
+- **WHEN** the Surveyor `CLAUDE.md` sets `stale_branch_ttl_minutes = 60`
+- **THEN** a branch 31 minutes old is NOT treated as stale; a branch 61 minutes old IS
+
+### Requirement: Abandoned branches are pruned after a configurable retention window
+Abandoned `reconcile/*` branches (both `surveyor-crash` and Dog-failure cases) SHALL be pruned
+from Dolt after a configurable retention window. The default retention window is 7 days.
+Pruning SHALL occur at Surveyor startup, after stale-branch cleanup, before the first reconcile.
+Pruned branches SHALL first be summarised (UUID, reason, timestamp) into a `reconcile_archive`
+row on `main` so the audit record survives branch deletion.
+
+Rationale: Dolt branch count grows unboundedly without pruning. Retaining branches for 7 days
+gives operators time to inspect failures. The `reconcile_archive` table preserves queryability
+of historical failures indefinitely without the storage cost of full branch retention.
+
+#### Scenario: Abandoned branch within retention window is kept
+- **WHEN** an abandoned branch timestamp is 3 days old and retention window is 7 days
+- **THEN** the branch is NOT pruned; it remains queryable in `dolt branch -a`
+
+#### Scenario: Abandoned branch past retention window is archived and deleted
+- **WHEN** an abandoned branch timestamp is 8 days old and retention window is 7 days
+- **THEN** the Surveyor writes a summary row to `reconcile_archive` on `main` and deletes the branch
+
+#### Scenario: Successfully merged branches are not subject to retention
+- **WHEN** a `reconcile/<uuid>` branch has been merged to `main`
+- **THEN** the branch is deleted immediately after merge (Dolt retains the merge commit on `main`)
+
+### Requirement: Dolt branch provides plan-isolation reads for the Surveyor's own writes
+The Surveyor MAY write plan metadata to the `reconcile/<uuid>` branch mid-reconcile and read
+back those writes on the same branch before merging. These reads are branch-isolated: they see
+the branch's own uncommitted rows but NOT other branches' concurrent writes.
+
+Dogs write `actual_topology` updates to `main`, NOT to the reconcile branch. The Surveyor reads
+`actual_topology` from `main` during the verify loop (after switching its Dolt session to `main`
+for that query). This means the reconcile branch is append-only for plan metadata; the Surveyor
+never relies on branch isolation for operational correctness — only for audit record coherence.
+
+#### Scenario: Plan metadata readable on branch before merge
+- **WHEN** the Surveyor writes a `reconcile_log` row on the `reconcile/<uuid>` branch
+- **THEN** a SELECT on that branch returns the row immediately (branch-local read)
+
+#### Scenario: Dog writes to main are not visible on the reconcile branch
+- **WHEN** a Dog updates `actual_topology` on `main` while the Surveyor holds the reconcile branch
+- **THEN** a SELECT on the reconcile branch does NOT see the Dog's write (branch isolation)
+
+#### Scenario: Verify loop reads actual_topology from main
+- **WHEN** the Surveyor runs its verify loop
+- **THEN** it queries `actual_topology` against `main`, not against the reconcile branch

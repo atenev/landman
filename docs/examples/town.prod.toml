@@ -1,0 +1,61 @@
+# Environment-specific overlay pattern — PRODUCTION OVERLAY.
+#
+# Applied on top of town.base.toml via:
+#   town-ctl apply town.base.toml --overlay town.prod.toml
+#
+# Only fields that differ from the base are declared here. Missing fields
+# retain their base values. This overlay enables the Surveyor, upgrades models,
+# lifts Polecat limits, and sets production cost budgets.
+#
+# This file IS checked into the repository. It contains no secrets.
+
+version = "1"
+
+[town]
+# home overrides the base to use the production data directory.
+home = "/data/gt-prod"
+
+[town.agents]
+# Enable the Surveyor in production. Disabled in base (development uses manual apply).
+surveyor = true
+
+# Upgrade models for production quality.
+[defaults]
+mayor_model   = "claude-opus-4-6"      # production: most capable model for Mayor
+polecat_model = "claude-sonnet-4-6"    # production: balanced quality/cost for workers
+max_polecats  = 30                     # production: full parallelism
+
+# Production cost budget: guard against runaway spend.
+[defaults.cost]
+daily_budget_usd = 200.0
+warn_at_pct      = 75
+
+# Override the backend rig for production: use the production branch and
+# point to the production repo path.
+[[rig]]
+name    = "backend"
+repo    = "/data/repos/backend"
+branch  = "production"
+enabled = true
+
+[rig.agents]
+mayor         = true
+witness       = true
+refinery      = true
+deacon        = true
+max_polecats  = 30
+polecat_model = "claude-sonnet-4-6"
+# Production Mayor gets a custom CLAUDE.md with production runbook context.
+mayor_claude_md = "/data/gt-prod/roles/mayor/prod/CLAUDE.md"
+
+[rig.cost]
+daily_budget_usd = 150.0
+warn_at_pct      = 80
+
+[[rig.formula]]
+name     = "nightly-regression"
+schedule = "0 1 * * *"   # nightly at 01:00 UTC
+
+[[rig.formula]]
+name     = "weekly-security-scan"
+schedule = "0 4 * * 0"   # Sunday at 04:00 UTC

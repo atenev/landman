@@ -1,0 +1,63 @@
+# Minimal single-rig development configuration.
+#
+# Shows required fields only. Suitable for a solo developer running one repo
+# under Gas Town. Env-var references are used for secrets — literal values are
+# never stored in this file or written to Dolt.
+
+# version is the town.toml schema version. town-ctl refuses to apply an unknown
+# version. Currently only "1" is supported.
+version = "1"
+
+# [town] declares the Gas Town instance itself.
+[town]
+# name is a lowercase-slug identifier for this Gas Town instance. Used as a
+# label in Dolt, Beads, and log output. Required.
+name = "dev-town"
+
+# home is the base directory for Gas Town data on the host (worktrees,
+# formula checkouts, agent state). Required. Supports ${VAR} interpolation.
+home = "/opt/gt"
+
+# dolt_port is the port the local Dolt server listens on. Default: 3306.
+dolt_port = 3306
+
+# [secrets] declares API keys and tokens resolved at apply time. Values must
+# be env-var references (${VAR}) or a path to a gitignored secrets file.
+# town-ctl fails fast if any referenced variable is unset at apply time.
+# Secret values are NEVER written to Dolt — they are injected directly into
+# agent process environments.
+[secrets]
+anthropic_api_key = "${ANTHROPIC_API_KEY}"
+github_token      = "${GITHUB_TOKEN}"
+
+# [[rig]] declares a single git repository managed by this Gas Town instance.
+# Use [[rig]] (array of tables) to declare multiple rigs.
+[[rig]]
+# name is a lowercase-slug identifier for this rig. Must be unique. Required.
+name = "backend"
+
+# repo is the filesystem path to the git repository. Supports ${VAR}
+# interpolation. Required.
+repo = "/srv/repos/backend"
+
+# branch is the git branch this rig tracks. Required.
+branch = "main"
+
+# enabled controls whether this rig is active. Disabled rigs are drained and
+# stopped by the Surveyor. Default: true.
+enabled = true
+
+# [rig.agents] controls which Gas Town roles run on this rig.
+# All four built-in roles default to true when this block is omitted.
+[rig.agents]
+mayor    = true   # long-lived human interface; required for witness
+witness  = true   # Polecat supervisor; requires mayor=true
+refinery = true   # merge-queue and conflict resolution
+deacon   = true   # health daemon; runs patrols and drives Dogs
+
+# [[rig.formula]] declares a scheduled Formula workflow for this rig.
+# name must be a unique slug within the rig.
+# schedule is a 5-field cron expression (minute hour day-of-month month weekday).
+[[rig.formula]]
+name     = "nightly-tests"
+schedule = "0 2 * * *"  # run at 02:00 UTC every night

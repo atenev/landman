@@ -1,0 +1,126 @@
+# Multi-rig production configuration.
+#
+# Shows defaults inheritance, per-rig model overrides for cost control,
+# enabled=false for maintenance, cost policy budgets, and multiple formulas.
+# This file is the base config checked into the repository. Secrets are
+# injected via env vars at apply time.
+
+version = "1"
+
+[town]
+name      = "acme-prod"
+home      = "${GT_HOME}"      # ${GT_HOME} is set in the operator's shell profile
+dolt_port = 3306
+
+# [town.agents] controls which Gas Town infrastructure services run alongside gt.
+[town.agents]
+# surveyor = true launches the Surveyor topology reconciler process.
+# town-ctl apply checks whether the Surveyor is running and starts it if not.
+# Once running, the Surveyor self-triggers via the Dolt change feed — it does
+# not need to be called again by town-ctl.
+surveyor = true
+
+# [defaults] provides values inherited by every rig unless overridden at the
+# rig level. Changing a default here propagates to all rigs on the next apply.
+[defaults]
+# mayor_model is the Claude model used for the Mayor agent.
+mayor_model   = "claude-opus-4-6"
+
+# polecat_model is the default Claude model for Polecat (worker) agents.
+# Individual rigs may override this to trade off quality vs. cost.
+polecat_model = "claude-sonnet-4-6"
+
+# max_polecats is the default ceiling on simultaneous Polecat processes per rig.
+# Must be between 1 and 30. Per-rig [rig.agents] blocks may override this.
+max_polecats = 20
+
+# [defaults.cost] is the default daily spend limit applied to every rig that
+# has no explicit [rig.cost] block. Exactly one of daily_budget_usd,
+# daily_budget_messages, or daily_budget_tokens must be set.
+[defaults.cost]
+daily_budget_usd = 100.0   # USD per day across all agents on the rig
+warn_at_pct      = 80      # emit a warning Bead to Mayor when 80% of budget used
+
+# [secrets] — env-var references resolved at apply time. Never stored in Dolt.
+[secrets]
+anthropic_api_key = "${ANTHROPIC_API_KEY}"
+github_token      = "${GITHUB_TOKEN}"
+
+# [secrets] also supports a gitignored file for additional secrets.
+# The file itself uses the same TOML format; its values overlay [secrets] fields.
+# file = "${HOME}/.config/gt/secrets.toml"
+
+# --- Rigs ---
+
+# Backend API rig — full agent complement, cost-controlled via per-rig model.
+[[rig]]
+name    = "api"
+repo    = "${PROJECTS_DIR}/api"
+branch  = "main"
+enabled = true
+
+[rig.agents]
+mayor        = true
+witness      = true
+refinery     = true
+deacon       = true
+# Override the default polecat_model for this rig to reduce cost on routine
+# tasks. The Mayor still uses the town-wide mayor_model (claude-opus-4-6).
+polecat_model = "claude-haiku-4-5-20251001"
+# Override max_polecats to limit parallelism on this lower-traffic service.
+max_polecats  = 10
+
+# per-rig cost override: stricter budget than the [defaults.cost] block
+[rig.cost]
+daily_budget_usd = 50.0
+warn_at_pct      = 70
+
+# CI formula: re-run failing tests nightly and file Beads for any that persist.
+[[rig.formula]]
+name     = "nightly-ci-repair"
+schedule = "0 3 * * 1-5"   # Mon–Fri at 03:00 UTC (skips weekends)
+
+# Dependency-update formula: propose PRs for stale dependencies weekly.
+[[rig.formula]]
+name     = "weekly-deps"
+schedule = "0 9 * * 1"     # Monday at 09:00 UTC
+
+
+# Frontend SPA rig — lighter configuration, no Refinery (single committer).
+[[rig]]
+name    = "frontend"
+repo    = "${PROJECTS_DIR}/frontend"
+branch  = "main"
+enabled = true
+
+[rig.agents]
+mayor    = true
+witness  = true
+refinery = false   # disabled: this repo has a single human committer; no merge queue needed
+deacon   = true
+# Inherit polecat_model and max_polecats from [defaults].
+
+[rig.cost]
+daily_budget_messages = 300   # budget by API message count instead of USD
+
+
+# Data pipeline rig — currently under maintenance; disabled until migration is complete.
+# The Surveyor will drain and stop all agents on this rig until enabled = true.
+[[rig]]
+name    = "data-pipeline"
+repo    = "${PROJECTS_DIR}/data-pipeline"
+branch  = "main"
+enabled = false   # disabled: in maintenance — set to true after DB migration
+
+[rig.agents]
+mayor    = true
+witness  = true
+refinery = true
+deacon   = true
+# mayor_claude_md overrides the Mayor's identity file for this rig, pointing to
+# a custom CLAUDE.md that includes data-pipeline-specific context.
+mayor_claude_md = "${GT_HOME}/roles/mayor/data-pipeline/CLAUDE.md"
+
+[[rig.formula]]
+name     = "schema-migration-check"
+schedule = "0 6 * * *"   # daily at 06:00 UTC: check migration status and report to Mayor
