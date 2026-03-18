@@ -1,6 +1,6 @@
 # ADR-0002: The Surveyor — Topology Reconciler Design
 
-- **Status**: Proposed
+- **Status**: Proposed (amended by ADR-0003)
 - **Date**: 2026-03-15
 - **Beads issue**: dgt-aj7
 - **Deciders**: Aleksandar Tenev
@@ -407,6 +407,10 @@ human-interface and decision-maker of last resort.
 - **Mid-reconcile change protocol** must be specified in the Surveyor
   `CLAUDE.md`: how the Surveyor detects an in-flight change, whether it
   drains or aborts, and how it queues the follow-up reconcile (→ dgt-9tj).
+- **Schema versioning superseded by ADR-0003**: the Surveyor SHALL read
+  `desired_topology_versions` as the first operation in every reconcile loop,
+  before querying any topology table. Per-row `schema_version` columns are not
+  used on any `desired_topology` table.
 
 ### Out of scope for this ADR
 
