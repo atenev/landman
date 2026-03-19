@@ -1,4 +1,25 @@
-# Multi-rig production configuration.
+# Multi-rig production configuration — annotated [rig.cost] reference.
+#
+# Demonstrates all four [rig.cost] scenarios:
+#   (1) api rig:          explicit [rig.cost] with daily_budget_usd
+#   (2) frontend rig:     explicit [rig.cost] with daily_budget_messages + warn_at_pct
+#   (3) data-pipeline rig: no [rig.cost] → inherits [defaults.cost]
+#   (4) internal-tools rig: no [rig.cost], no [defaults.cost] fallback would apply →
+#                           unrestricted (shown via comment; omit [defaults.cost] to use)
+#
+# Budget types (choose exactly one per [rig.cost] or [defaults.cost] block):
+#   daily_budget_usd      — max spend in US dollars per calendar day
+#   daily_budget_messages — max Claude API message round-trips per day
+#                           (useful for subscription plans billed per message)
+#   daily_budget_tokens   — max input+output tokens per day
+#                           (useful when token throughput matters more than spend)
+#
+# Inheritance chain (highest priority first):
+#   [rig.cost] > [defaults.cost] > unrestricted (no policy)
+#
+# warn_at_pct controls when Deacon files a warning Bead to Mayor.
+# Range: 1–99. Default: 80 (warn at 80% of budget). The hard cap is always
+# 100%: Deacon files a drain Bead when the rig hits the daily limit.
 #
 # Shows defaults inheritance, per-rig model overrides for cost control,
 # enabled=false for maintenance, cost policy budgets, multiple formulas,
@@ -55,12 +76,14 @@ polecat_model = "claude-sonnet-4-6"
 # Must be between 1 and 30. Per-rig [rig.agents] blocks may override this.
 max_polecats = 20
 
-# [defaults.cost] is the default daily spend limit applied to every rig that
-# has no explicit [rig.cost] block. Exactly one of daily_budget_usd,
-# daily_budget_messages, or daily_budget_tokens must be set.
+# [defaults.cost] is the fallback daily spend limit for every rig that has no
+# explicit [rig.cost] block. Exactly one budget field must be set.
+# This is the inheritance chain's second tier: [rig.cost] > [defaults.cost].
+# Rigs without [rig.cost] AND without [defaults.cost] are unrestricted (no row
+# is written to desired_cost_policy for them — absence means no limit).
 [defaults.cost]
-daily_budget_usd = 100.0   # USD per day across all agents on the rig
-warn_at_pct      = 80      # emit a warning Bead to Mayor when 80% of budget used
+daily_budget_usd = 100.0   # fallback: $100 USD/day if rig has no [rig.cost] block
+warn_at_pct      = 80      # warn when 80% of the fallback budget is consumed
 
 # [secrets] — env-var references resolved at apply time. Never stored in Dolt.
 [secrets]
@@ -73,7 +96,11 @@ github_token      = "${GITHUB_TOKEN}"
 
 # --- Rigs ---
 
-# Backend API rig — full agent complement, cost-controlled via per-rig model.
+# ── Scenario 1: explicit [rig.cost] with daily_budget_usd ────────────────────
+#
+# Use daily_budget_usd when you track spend in dollars (pay-as-you-go API plan).
+# This overrides [defaults.cost] for this rig only; other rigs still inherit
+# the $100/day default declared above.
 [[rig]]
 name    = "api"
 repo    = "${PROJECTS_DIR}/api"
@@ -94,10 +121,11 @@ max_polecats  = 10
 # Only roles with scope="rig" require opt-in; town-scoped roles activate automatically.
 roles = ["reviewer", "security-scanner"]
 
-# per-rig cost override: stricter budget than the [defaults.cost] block
+# [rig.cost] — Scenario 1: USD budget, stricter than the [defaults.cost] fallback.
+# Deacon warns Mayor at 70% ($35/day consumed); drains at 100% ($50/day).
 [rig.cost]
-daily_budget_usd = 50.0
-warn_at_pct      = 70
+daily_budget_usd = 50.0   # per-rig cap: $50/day (overrides [defaults.cost] $100/day)
+warn_at_pct      = 70     # warn at 70% ($35) — earlier warning for active rig
 
 # CI formula: re-run failing tests nightly and file Beads for any that persist.
 [[rig.formula]]
@@ -110,7 +138,11 @@ name     = "weekly-deps"
 schedule = "0 9 * * 1"     # Monday at 09:00 UTC
 
 
-# Frontend SPA rig — lighter configuration, no Refinery (single committer).
+# ── Scenario 2: explicit [rig.cost] with daily_budget_messages ───────────────
+#
+# Use daily_budget_messages when your plan is billed per API message
+# (subscription plans, internal rate cards). Token counts vary per request;
+# message counts are stable and predictable.
 [[rig]]
 name    = "frontend"
 repo    = "${PROJECTS_DIR}/frontend"
@@ -120,16 +152,24 @@ enabled = true
 [rig.agents]
 mayor    = true
 witness  = true
-refinery = false   # disabled: this repo has a single human committer; no merge queue needed
+refinery = false   # disabled: single human committer — no merge queue needed
 deacon   = true
 # Inherit polecat_model and max_polecats from [defaults].
 
+# [rig.cost] — Scenario 2: subscription/message-count budget.
+# warn_at_pct defaults to 80 when omitted; set explicitly here for clarity.
+# Deacon warns Mayor at 85% (255/300 messages); drains at 300 messages/day.
 [rig.cost]
-daily_budget_messages = 300   # budget by API message count instead of USD
+daily_budget_messages = 300   # max 300 API messages/day (subscription plan)
+warn_at_pct           = 85    # warn at 85% (255 messages) before hitting the cap
 
 
-# Data pipeline rig — currently under maintenance; disabled until migration is complete.
-# The Surveyor will drain and stop all agents on this rig until enabled = true.
+# ── Scenario 3: no [rig.cost] — inherits [defaults.cost] ────────────────────
+#
+# When a rig has no [rig.cost] block, it falls through to [defaults.cost].
+# This rig gets the $100/day limit and 80% warning from [defaults.cost] above.
+# No row in desired_cost_policy is written for this rig specifically; instead
+# its policy row uses the town-wide defaults at apply time.
 [[rig]]
 name    = "data-pipeline"
 repo    = "${PROJECTS_DIR}/data-pipeline"
@@ -145,9 +185,40 @@ deacon   = true
 # a custom CLAUDE.md that includes data-pipeline-specific context.
 mayor_claude_md = "${GT_HOME}/roles/mayor/data-pipeline/CLAUDE.md"
 
+# No [rig.cost] block: this rig inherits the [defaults.cost] policy ($100/day,
+# warn at 80%). To give it a stricter or looser budget, add a [rig.cost] block.
+
 [[rig.formula]]
 name     = "schema-migration-check"
 schedule = "0 6 * * *"   # daily at 06:00 UTC: check migration status and report to Mayor
+
+
+# ── Scenario 4: unrestricted rig (no spend limit) ────────────────────────────
+#
+# A rig is unrestricted when NEITHER [rig.cost] NOR [defaults.cost] apply to it.
+# Because this file declares [defaults.cost], all rigs above inherit a fallback
+# limit. To make a rig truly unrestricted in a file that has [defaults.cost],
+# remove [defaults.cost] entirely and omit [rig.cost] from the rig — or scope
+# the defaults to only the rigs that need them via per-rig [rig.cost] blocks.
+#
+# Example of an unrestricted rig in a file WITHOUT [defaults.cost]:
+#
+#   [[rig]]
+#   name    = "internal-tools"
+#   repo    = "${PROJECTS_DIR}/internal-tools"
+#   branch  = "main"
+#   enabled = true
+#
+#   [rig.agents]
+#   mayor   = true
+#   witness = true
+#   deacon  = true
+#   # No [rig.cost] block and no [defaults.cost] → unrestricted.
+#   # Deacon will never file cost-related Beads for this rig.
+#
+# When town-ctl apply processes a rig with no resolved cost policy, it writes
+# no row to desired_cost_policy for that rig_name, and Deacon skips it during
+# cost patrols.
 
 
 # --- Custom Roles (ADR-0004) ---

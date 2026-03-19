@@ -61,3 +61,24 @@ deacon   = true   # health daemon; runs patrols and drives Dogs
 [[rig.formula]]
 name     = "nightly-tests"
 schedule = "0 2 * * *"  # run at 02:00 UTC every night
+
+# Cost controls (optional — Scenario 4: unrestricted by default)
+#
+# This file has no [defaults.cost] block and no [rig.cost] block, so the rig
+# has no daily spend limit. Deacon will not file cost-related Beads.
+# This is appropriate for development environments where cost control is
+# handled by the subscription plan rather than per-rig limits.
+#
+# To add a spend limit, uncomment and populate one of these blocks:
+#
+# [defaults.cost]                 # applies to all rigs without their own [rig.cost]
+# daily_budget_usd = 20.0         # $20/day cap (pay-as-you-go)
+# warn_at_pct      = 80           # warn Deacon at 80% ($16/day)
+#
+# Or per-rig (in the [[rig]] section above):
+#
+# [rig.cost]
+# daily_budget_usd      = 20.0    # budget in USD (pay-as-you-go)
+# # daily_budget_messages = 100   # OR: budget by message count (subscription plan)
+# # daily_budget_tokens   = 500000 # OR: budget by token count
+# warn_at_pct           = 80     # optional; defaults to 80 when cost block present
