@@ -1,0 +1,143 @@
+# gastown-surveyor@.service — Surveyor agent for a Gas Town instance
+#
+# Template unit parameterised by town name (%i / %I).
+# Multiple towns can coexist on the same host:
+#
+#   systemctl enable --now gastown-surveyor@my-town
+#   systemctl enable --now gastown-surveyor@staging-town
+#
+# ─── Installation ────────────────────────────────────────────────────────────
+#
+# 1. Copy this file:
+#
+#      sudo cp gastown-surveyor@.service /etc/systemd/system/
+#      sudo systemctl daemon-reload
+#
+# 2. Create the working directory for the town (GT_HOME):
+#
+#      sudo mkdir -p /var/lib/gastown/<town-name>
+#      sudo chown gastown:gastown /var/lib/gastown/<town-name>
+#
+# 3. Place the Surveyor CLAUDE.md in the working directory:
+#
+#      sudo cp docs/agents/surveyor.CLAUDE.md \
+#          /var/lib/gastown/<town-name>/CLAUDE.md
+#
+#    Claude Code reads CLAUDE.md from the process working directory at startup.
+#
+# 4. Create the environment file (never commit this file):
+#
+#      sudo mkdir -p /etc/gastown
+#      sudo tee /etc/gastown/surveyor-<town-name>.env <<'EOF'
+#      ANTHROPIC_API_KEY=sk-ant-...
+#      DOLT_ENDPOINT=<host>:<port>
+#      GT_TOWN=<town-name>
+#      GT_HOME=/var/lib/gastown/<town-name>
+#      # Optional overrides:
+#      # GT_SURVEYOR_STOP=        (set to any value to trigger clean exit)
+#      EOF
+#      sudo chmod 600 /etc/gastown/surveyor-<town-name>.env
+#
+# 5. Enable and start:
+#
+#      sudo systemctl enable --now gastown-surveyor@<town-name>
+#
+# 6. Check status and logs:
+#
+#      systemctl status gastown-surveyor@<town-name>
+#      journalctl -u gastown-surveyor@<town-name> -f
+#
+# ─── town-ctl integration ────────────────────────────────────────────────────
+#
+# When town.toml sets:
+#
+#   [town.agents]
+#   surveyor = true
+#
+# town-ctl apply performs the following steps on the host:
+#
+#   1. Writes /etc/gastown/surveyor-<town>.env with ANTHROPIC_API_KEY and
+#      DOLT_ENDPOINT resolved from the town configuration.
+#   2. Copies the Surveyor CLAUDE.md to /var/lib/gastown/<town>/CLAUDE.md.
+#   3. Runs: systemctl enable --now gastown-surveyor@<town>
+#
+# On town-ctl apply with surveyor = false (or on town removal):
+#
+#   systemctl disable --now gastown-surveyor@<town>
+#
+# The unit is designed to be idempotent: repeated applies are safe.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=Gas Town Surveyor — topology reconciler for town %i
+Documentation=https://github.com/tenev/dgt
+After=network-online.target
+Wants=network-online.target
+
+# Restart after 5 s if Dolt or the Beads service is transiently unavailable.
+# The Surveyor itself handles orderly shutdown on SIGTERM (releases surveyor_lock
+# and completes the current atomic operation before exiting).
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Run as a dedicated low-privilege user. Create with:
+#   useradd --system --home /var/lib/gastown --shell /usr/sbin/nologin gastown
+User=gastown
+Group=gastown
+
+# GT_HOME is the working directory for this town. Claude Code reads CLAUDE.md
+# from the working directory at startup, so this must point to the directory
+# that contains the Surveyor CLAUDE.md.
+WorkingDirectory=/var/lib/gastown/%i
+
+# Secrets and per-town configuration. Required keys:
+#   ANTHROPIC_API_KEY — Claude API key
+#   DOLT_ENDPOINT     — host:port of the Dolt SQL server (e.g. dolt.gastown:3306)
+#
+# Optional keys recognised by the Surveyor:
+#   GT_TOWN           — town name (defaults to %i if unset)
+#   GT_HOME           — override working directory path (informational)
+#   GT_SURVEYOR_STOP  — set to any value to trigger a clean exit on next startup
+EnvironmentFile=/etc/gastown/surveyor-%i.env
+
+# Provide the town name as a default; EnvironmentFile can override.
+Environment=GT_TOWN=%i
+
+# ExecStart: run Claude Code as the Surveyor.
+# --dangerouslySkipPermissions is required for long-lived autonomous agents
+# that must not block on interactive permission prompts.
+ExecStart=/usr/local/bin/claude --dangerouslySkipPermissions
+
+# Crash recovery. The Surveyor is designed to restart safely (GUPP protocol:
+# re-reads and re-reconciles full desired/actual state on every startup).
+Restart=on-failure
+RestartSec=10s
+
+# Exponential back-off after repeated failures (systemd >= 253).
+# RestartSteps and RestartMaxDelaySec are ignored on older versions.
+RestartSteps=5
+RestartMaxDelaySec=120s
+
+# Allow up to 30 s for a graceful shutdown (SIGTERM → release surveyor_lock →
+# complete current atomic operation). SIGKILL is sent after this deadline.
+TimeoutStopSec=30s
+
+# Forward all output to journald. Query with:
+#   journalctl -u gastown-surveyor@<town> [-f] [--since "1 hour ago"]
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gastown-surveyor-%i
+
+# Harden the process against accidental writes outside GT_HOME.
+# Remove or relax these if the Surveyor needs broader filesystem access.
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/gastown/%i /tmp
+
+[Install]
+WantedBy=multi-user.target
