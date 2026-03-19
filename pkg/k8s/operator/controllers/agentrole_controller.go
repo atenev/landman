@@ -50,6 +50,9 @@ type AgentRoleReconciler struct {
 	client.Client
 	Scheme             *runtime.Scheme
 	StatusSyncInterval time.Duration
+	// ConnectDolt overrides the Dolt connection factory for testing.
+	// When nil, openDoltConnection is used.
+	ConnectDolt DoltConnectorByName
 }
 
 // +kubebuilder:rbac:groups=gastown.tenev.io,resources=agentroles,verbs=get;list;watch;create;update;patch
@@ -96,7 +99,11 @@ func (r *AgentRoleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// 5. Resolve parent GasTown → DoltInstance readiness gate.
-	dolt, err := openDoltConnection(ctx, r.Client, ar.Spec.TownRef, ar.Namespace)
+	connectDolt := r.ConnectDolt
+	if connectDolt == nil {
+		connectDolt = openDoltConnection
+	}
+	dolt, err := connectDolt(ctx, r.Client, ar.Spec.TownRef, ar.Namespace)
 	if err != nil {
 		logger.Info("dolt not ready, requeuing", "reason", err.Error())
 		r.setCondition(&ar, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltNotReady", err.Error())
@@ -227,7 +234,11 @@ func (r *AgentRoleReconciler) handleDeletion(
 	}
 
 	// Try to open a Dolt connection; if Dolt is unavailable, requeue.
-	dolt, err := openDoltConnection(ctx, r.Client, ar.Spec.TownRef, ar.Namespace)
+	connectDolt := r.ConnectDolt
+	if connectDolt == nil {
+		connectDolt = openDoltConnection
+	}
+	dolt, err := connectDolt(ctx, r.Client, ar.Spec.TownRef, ar.Namespace)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 10 * time.Second},
 			fmt.Errorf("dolt not ready during deletion: %w", err)

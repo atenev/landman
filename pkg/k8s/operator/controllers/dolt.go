@@ -22,6 +22,17 @@ type tableVersion struct {
 	Version int
 }
 
+// DoltConnector is a function type for opening Dolt connections from a
+// NamespacedRef. Reconcilers expose this as an optional field so tests can
+// inject a fake doltClient without dialling a real MySQL endpoint.
+// When nil, the reconciler falls back to openDoltConnectionFromSpec.
+type DoltConnector func(ctx context.Context, k8s client.Client, ref gasv1alpha1.NamespacedRef) (*doltClient, error)
+
+// DoltConnectorByName is a function type for opening Dolt connections via a
+// GasTown name + namespace lookup. Used by AgentRoleReconciler.
+// When nil, the reconciler falls back to openDoltConnection.
+type DoltConnectorByName func(ctx context.Context, k8s client.Client, gastownName, ns string) (*doltClient, error)
+
 // doltClient wraps a *sql.DB for Dolt SQL operations.
 type doltClient struct {
 	db *sql.DB

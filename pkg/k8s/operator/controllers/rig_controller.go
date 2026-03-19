@@ -40,6 +40,9 @@ type RigReconciler struct {
 	client.Client
 	Scheme             *runtime.Scheme
 	StatusSyncInterval time.Duration
+	// ConnectDolt overrides the Dolt connection factory for testing.
+	// When nil, openDoltConnectionFromSpec is used.
+	ConnectDolt DoltConnector
 }
 
 // +kubebuilder:rbac:groups=gastown.tenev.io,resources=rigs,verbs=get;list;watch;create;update;patch
@@ -85,7 +88,11 @@ func (r *RigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	dolt, err := openDoltConnectionFromSpec(ctx, r.Client, gt.Spec.DoltRef)
+	connectDolt := r.ConnectDolt
+	if connectDolt == nil {
+		connectDolt = openDoltConnectionFromSpec
+	}
+	dolt, err := connectDolt(ctx, r.Client, gt.Spec.DoltRef)
 	if err != nil {
 		logger.Info("dolt not ready, requeuing", "reason", err.Error())
 		r.setCondition(&rig, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltNotReady", err.Error())
@@ -298,7 +305,11 @@ func (r *RigReconciler) handleDeletion(ctx context.Context, rig *gasv1alpha1.Rig
 			fmt.Errorf("get gastown during drain: %w", err)
 	}
 
-	dolt, err := openDoltConnectionFromSpec(ctx, r.Client, gt.Spec.DoltRef)
+	connectDolt := r.ConnectDolt
+	if connectDolt == nil {
+		connectDolt = openDoltConnectionFromSpec
+	}
+	dolt, err := connectDolt(ctx, r.Client, gt.Spec.DoltRef)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 10 * time.Second},
 			fmt.Errorf("dolt not ready during drain: %w", err)

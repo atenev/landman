@@ -36,6 +36,9 @@ type GasTownReconciler struct {
 	client.Client
 	Scheme             *runtime.Scheme
 	StatusSyncInterval time.Duration
+	// ConnectDolt overrides the Dolt connection factory for testing.
+	// When nil, openDoltConnectionFromSpec is used.
+	ConnectDolt DoltConnector
 }
 
 // +kubebuilder:rbac:groups=gastown.tenev.io,resources=gastowns,verbs=get;list;watch;create;update;patch
@@ -60,7 +63,11 @@ func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// 2. Resolve DoltInstance readiness gate.
 	//    GasTown is cluster-scoped; DoltRef carries its own namespace.
-	dolt, err := openDoltConnectionFromSpec(ctx, r.Client, gt.Spec.DoltRef)
+	connectDolt := r.ConnectDolt
+	if connectDolt == nil {
+		connectDolt = openDoltConnectionFromSpec
+	}
+	dolt, err := connectDolt(ctx, r.Client, gt.Spec.DoltRef)
 	if err != nil {
 		logger.Info("dolt not ready, requeuing", "reason", err.Error())
 		r.setCondition(&gt, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltNotReady", err.Error())
