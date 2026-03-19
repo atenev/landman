@@ -1,0 +1,79 @@
+# ScalingAgent example — reactive Polecat pool scaling (dgt-5g5).
+#
+# This fragment shows how to declare a ScalingAgent custom role in town.toml
+# and opt a rig into it. Drop this block into your town.toml (or an included
+# fragment) alongside your [[rig]] definitions.
+#
+# The ScalingAgent watches Bead queue depth and adjusts desired_agent_config
+# max_count for Polecats when depth exceeds configurable thresholds. It writes
+# through the Dolt desired_topology contract; the Surveyor reconciles.
+# See docs/agents/scaling_agent.CLAUDE.md for full agent behaviour.
+
+version = "1"
+
+# --- Global role definition (ADR-0004, Decision 1) ----------------------------
+#
+# Defined once, opted in per-rig via [rig.agents].roles.
+# scope = "rig" means per-rig opt-in is required (not town-wide).
+
+[[role]]
+name        = "scaling-agent"
+description = "Reactive Polecat pool scaler. Monitors Bead queue depth and adjusts desired_agent_config max_count."
+scope       = "rig"
+lifespan    = "persistent"
+
+[role.identity]
+# claude_md must point to the ScalingAgent CLAUDE.md on disk.
+# ${GT_HOME} is interpolated by town-ctl at apply time (ADR-0001, Decision 6).
+claude_md = "${GT_HOME}/roles/scaling-agent/CLAUDE.md"
+model     = "claude-haiku-4-5-20251001"   # lightweight model; polling loop is IO-bound
+
+[role.trigger]
+# schedule: the ScalingAgent is a persistent loop but is (re)spawned on a
+# schedule as a safety net if it exits unexpectedly. The CLAUDE.md poll loop
+# keeps it running between spawn events.
+type     = "schedule"
+schedule = "*/5 * * * *"   # re-spawn check every 5 minutes
+
+[role.supervision]
+parent     = "deacon"    # Deacon health-monitors the ScalingAgent
+reports_to = "mayor"     # escalations go to Mayor
+
+[role.resources]
+max_instances = 1   # exactly one ScalingAgent per rig (enforced by Surveyor)
+
+# --- Rig that opts in to ScalingAgent -----------------------------------------
+
+[[rig]]
+name    = "backend"
+repo    = "/srv/repos/backend"
+branch  = "main"
+enabled = true
+
+[rig.agents]
+mayor        = true
+witness      = true
+refinery     = true
+deacon       = true
+max_polecats = 10     # initial value; ScalingAgent will adjust this at runtime
+
+# Opt this rig into the scaling-agent role.
+roles = ["scaling-agent"]
+
+# ScalingAgent environment variables are passed at spawn time by the Surveyor.
+# Declare them in the role's CLAUDE.md environment stanza (not in town.toml —
+# town.toml does not carry per-role environment overrides in V1).
+#
+# Typical env for this rig (set in the Surveyor's spawn command):
+#   GT_SCALING_RIG_NAME          = "backend"
+#   GT_SCALING_QUEUE_DEPTH_HIGH  = "15"    # scale up when >15 open tasks
+#   GT_SCALING_QUEUE_DEPTH_LOW   = "3"     # scale down when <=3 open tasks
+#   GT_SCALING_STEP_UP           = "3"
+#   GT_SCALING_STEP_DOWN         = "1"
+#   GT_SCALING_MIN_POLECATS      = "2"
+#   GT_SCALING_MAX_POLECATS      = "20"
+#   GT_SCALING_COOLDOWN_SECONDS  = "120"
+
+[rig.cost]
+daily_budget_usd = 150.0
+warn_at_pct      = 80
