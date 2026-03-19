@@ -1,0 +1,20 @@
+{{- /*
+ConfigMap embeds the DDL migration SQL files that the operator uses to
+initialize and migrate the Dolt schema on first boot. The operator binary
+also embeds these via go:embed; this ConfigMap allows overriding migrations
+without rebuilding the image.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gastown-operator.fullname" . }}-ddl
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gastown-operator.labels" . | nindent 4 }}
+data:
+  # DDL files are managed via the operator binary's embedded migrations.
+  # Override individual migration files here to customize the schema.
+  # Key format: <migration-filename>.sql
+  # Example:
+  #   001_desired_topology.sql: |
+  #     CREATE TABLE IF NOT EXISTS desired_topology ( ... );

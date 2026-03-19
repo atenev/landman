@@ -1,0 +1,94 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ include "gastown-operator.fullname" . }}-validating-webhook
+  labels:
+    {{- include "gastown-operator.labels" . | nindent 4 }}
+  {{- if .Values.webhook.certManager }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "gastown-operator.fullname" . }}-webhook-cert
+  {{- end }}
+webhooks:
+  - name: vagentrole.gastown.tenev.io
+    rules:
+      - apiGroups: ["gastown.tenev.io"]
+        apiVersions: ["v1alpha1"]
+        resources: ["agentroles"]
+        operations: ["CREATE", "UPDATE"]
+    clientConfig:
+      service:
+        name: {{ include "gastown-operator.fullname" . }}-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-gastown-tenev-io-v1alpha1-agentrole
+    failurePolicy: Fail
+    sideEffects: None
+    admissionReviewVersions: ["v1"]
+  - name: vrig.gastown.tenev.io
+    rules:
+      - apiGroups: ["gastown.tenev.io"]
+        apiVersions: ["v1alpha1"]
+        resources: ["rigs"]
+        operations: ["CREATE", "UPDATE"]
+    clientConfig:
+      service:
+        name: {{ include "gastown-operator.fullname" . }}-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-gastown-tenev-io-v1alpha1-rig
+    failurePolicy: Fail
+    sideEffects: None
+    admissionReviewVersions: ["v1"]
+  - name: vgastown.gastown.tenev.io
+    rules:
+      - apiGroups: ["gastown.tenev.io"]
+        apiVersions: ["v1alpha1"]
+        resources: ["gastowns"]
+        operations: ["CREATE", "UPDATE"]
+    clientConfig:
+      service:
+        name: {{ include "gastown-operator.fullname" . }}-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-gastown-tenev-io-v1alpha1-gastown
+    failurePolicy: Fail
+    sideEffects: None
+    admissionReviewVersions: ["v1"]
+  - name: vdoltinstance.gastown.tenev.io
+    rules:
+      - apiGroups: ["gastown.tenev.io"]
+        apiVersions: ["v1alpha1"]
+        resources: ["doltinstances"]
+        operations: ["CREATE", "UPDATE"]
+    clientConfig:
+      service:
+        name: {{ include "gastown-operator.fullname" . }}-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-gastown-tenev-io-v1alpha1-doltinstance
+    failurePolicy: Fail
+    sideEffects: None
+    admissionReviewVersions: ["v1"]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ include "gastown-operator.fullname" . }}-mutating-webhook
+  labels:
+    {{- include "gastown-operator.labels" . | nindent 4 }}
+  {{- if .Values.webhook.certManager }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "gastown-operator.fullname" . }}-webhook-cert
+  {{- end }}
+webhooks:
+  - name: mrig.gastown.tenev.io
+    rules:
+      - apiGroups: ["gastown.tenev.io"]
+        apiVersions: ["v1alpha1"]
+        resources: ["rigs"]
+        operations: ["CREATE", "UPDATE"]
+    clientConfig:
+      service:
+        name: {{ include "gastown-operator.fullname" . }}-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /mutate-gastown-tenev-io-v1alpha1-rig
+    failurePolicy: Fail
+    sideEffects: None
+    admissionReviewVersions: ["v1"]

@@ -1,0 +1,92 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "gastown-operator.fullname" . }}
+  labels:
+    {{- include "gastown-operator.labels" . | nindent 4 }}
+rules:
+  # Manage cluster-scoped GasTown CRDs and their status/finalizers.
+  - apiGroups: ["gastown.tenev.io"]
+    resources: ["gastowns", "gastowns/status", "gastowns/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Manage namespaced CRDs: Rig, AgentRole, DoltInstance.
+  - apiGroups: ["gastown.tenev.io"]
+    resources: ["rigs", "rigs/status", "rigs/finalizers",
+                "agentroles", "agentroles/status", "agentroles/finalizers",
+                "doltinstances", "doltinstances/status", "doltinstances/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Leader-election leases for controller-runtime HA.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Events for operator observability.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # Manage Deployments (Surveyor) and StatefulSets (DoltInstance).
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Manage Services and PersistentVolumeClaims for DoltInstance.
+  - apiGroups: [""]
+    resources: ["services", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Read ConfigMaps (CLAUDE.md refs) and Secrets (API keys).
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  # cert-manager Certificates for webhook TLS.
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates", "issuers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "gastown-operator.fullname" . }}
+  labels:
+    {{- include "gastown-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "gastown-operator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "gastown-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Role for leader election in the operator's own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "gastown-operator.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gastown-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "gastown-operator.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gastown-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "gastown-operator.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "gastown-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

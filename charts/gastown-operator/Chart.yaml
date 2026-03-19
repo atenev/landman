@@ -1,0 +1,13 @@
+apiVersion: v2
+name: gastown-operator
+description: Kubernetes operator for Gas Town — declarative multi-agent AI coding orchestrator
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.26.0"
+
+dependencies:
+  - name: cert-manager
+    version: ">=1.13.0"
+    repository: https://charts.jetstack.io
+    condition: cert-manager.enabled

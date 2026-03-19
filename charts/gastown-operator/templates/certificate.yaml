@@ -1,0 +1,30 @@
+{{- if .Values.webhook.certManager }}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "gastown-operator.fullname" . }}-selfsigned
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gastown-operator.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "gastown-operator.fullname" . }}-webhook-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gastown-operator.labels" . | nindent 4 }}
+spec:
+  dnsNames:
+    - {{ include "gastown-operator.fullname" . }}-webhook
+    - {{ include "gastown-operator.fullname" . }}-webhook.{{ .Release.Namespace }}
+    - {{ include "gastown-operator.fullname" . }}-webhook.{{ .Release.Namespace }}.svc
+    - {{ include "gastown-operator.fullname" . }}-webhook.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ include "gastown-operator.fullname" . }}-selfsigned
+  secretName: {{ include "gastown-operator.fullname" . }}-webhook-cert
+{{- end }}

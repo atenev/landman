@@ -1,0 +1,70 @@
+# Default values for gastown-operator.
+
+image:
+  repository: ghcr.io/tenev/gastown-operator
+  tag: ""  # Defaults to Chart.appVersion when empty
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Operator deployment configuration
+replicaCount: 1
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+# Default Surveyor container image (overridable per GasTown CR)
+surveyorImage:
+  repository: ghcr.io/tenev/gastown-surveyor
+  tag: ""  # Defaults to Chart.appVersion when empty
+
+# How often the operator syncs status from actual_topology (e.g. "30s", "1m")
+statusSyncInterval: "30s"
+
+# Webhook TLS configuration
+webhook:
+  # Use cert-manager to provision the webhook TLS certificate (recommended).
+  # Set to false and provide certFile/keyFile for manual TLS.
+  certManager: true
+
+  # Manual TLS escape hatch — only used when certManager=false.
+  # Mount the cert/key into the operator pod and set paths here.
+  certFile: ""
+  keyFile: ""
+
+  # Port the webhook server listens on.
+  port: 9443
+
+# cert-manager sub-chart — disable if cert-manager is already installed in cluster
+cert-manager:
+  enabled: true
+  installCRDs: true
+
+serviceAccount:
+  # Annotations to add to the service account
+  annotations: {}
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
