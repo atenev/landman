@@ -4,15 +4,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tenev/dgt/pkg/manifest"
 	"github.com/tenev/dgt/pkg/townctl"
 )
 
 // ── helper ─────────────────────────────────────────────────────────────────
 
-// customRolesBase is a minimal town manifest with no roles or rigs; tests
-// append TOML snippets to build specific scenarios.
-const customRolesBase = `
+// roleBase is a minimal town manifest with no roles or rigs; tests append
+// TOML snippets to build specific scenarios.
+// Note: baseManifest is declared in includes_test.go (shared across townctl_test).
+const roleBase = `
 version = "1"
 
 [town]
@@ -20,19 +20,10 @@ name = "t"
 home = "/opt/gt"
 `
 
-func mustParseRoles(t *testing.T, tomlStr string) *manifest.TownManifest {
-	t.Helper()
-	m, err := manifest.Parse([]byte(tomlStr))
-	if err != nil {
-		t.Fatalf("manifest.Parse: %v", err)
-	}
-	return m
-}
-
 // ── ResolveCustomRoles ──────────────────────────────────────────────────────
 
 func TestResolveCustomRoles_Empty(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[rig]]
 name   = "r"
 repo   = "/srv/r"
@@ -45,7 +36,7 @@ branch = "main"
 }
 
 func TestResolveCustomRoles_MinimalRole(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -92,7 +83,7 @@ branch = "main"
 }
 
 func TestResolveCustomRoles_ScheduleTrigger(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "scanner"
 scope = "town"
@@ -125,7 +116,7 @@ branch = "main"
 }
 
 func TestResolveCustomRoles_EventTrigger(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "pr-checker"
 scope = "rig"
@@ -168,7 +159,7 @@ func TestResolveCustomRoles_AllTriggerTypesValid(t *testing.T) {
 	for _, tc := range triggers {
 		tc := tc
 		t.Run(tc.triggerType, func(t *testing.T) {
-			tomlStr := baseManifest + `
+			tomlStr := roleBase + `
 [[role]]
 name  = "testrole"
 scope = "rig"
@@ -188,7 +179,7 @@ name   = "r"
 repo   = "/srv/r"
 branch = "main"
 `
-			m := mustParseRoles(t, tomlStr)
+			m := parseSecretManifest(t, tomlStr)
 			rows := townctl.ResolveCustomRoles(m)
 			if len(rows) != 1 || rows[0].TriggerType != tc.triggerType {
 				t.Errorf("trigger type %q: got rows %+v", tc.triggerType, rows)
@@ -198,7 +189,7 @@ branch = "main"
 }
 
 func TestResolveCustomRoles_ReportsTo(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "town"
@@ -228,7 +219,7 @@ branch = "main"
 }
 
 func TestResolveCustomRoles_MaxInstances(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "scaling-agent"
 scope = "rig"
@@ -263,7 +254,7 @@ branch = "main"
 // ── ResolveRigCustomRoles ───────────────────────────────────────────────────
 
 func TestResolveRigCustomRoles_Empty_WhenNoOptIns(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -289,7 +280,7 @@ branch = "main"
 }
 
 func TestResolveRigCustomRoles_OptInProducesRows(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -326,7 +317,7 @@ branch = "main"
 }
 
 func TestResolveRigCustomRoles_MultipleRigsMultipleRoles(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -379,7 +370,7 @@ branch = "main"
 // ── DiffCustomRoles ─────────────────────────────────────────────────────────
 
 func TestDiffCustomRoles_AddRole_WhenCurrentEmpty(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -408,7 +399,7 @@ branch = "main"
 }
 
 func TestDiffCustomRoles_RemoveRole_WhenRemovedFromManifest(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[rig]]
 name   = "r"
 repo   = "/srv/r"
@@ -431,7 +422,7 @@ branch = "main"
 }
 
 func TestDiffCustomRoles_UpdateRole_WhenFieldChanged(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -468,7 +459,7 @@ branch = "main"
 }
 
 func TestDiffCustomRoles_NoChange_Idempotent(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -503,7 +494,7 @@ branch = "main"
 }
 
 func TestDiffCustomRoles_AddRigOptIn_WhenCurrentEmpty(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -535,7 +526,7 @@ branch = "main"
 }
 
 func TestDiffCustomRoles_RemoveRigOptIn_WhenRemovedFromManifest(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -567,7 +558,7 @@ branch = "main"
 // ── CustomRolesApplySQL ─────────────────────────────────────────────────────
 
 func TestCustomRolesApplySQL_FirstStatementIsVersionsUpsert(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[rig]]
 name   = "r"
 repo   = "/srv/r"
@@ -589,7 +580,7 @@ branch = "main"
 }
 
 func TestCustomRolesApplySQL_UpsertRoleRow(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -624,7 +615,7 @@ branch = "main"
 }
 
 func TestCustomRolesApplySQL_DeleteRemovedRoles(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -660,7 +651,7 @@ branch = "main"
 }
 
 func TestCustomRolesApplySQL_DeleteAllRoles_WhenNoRoles(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[rig]]
 name   = "r"
 repo   = "/srv/r"
@@ -680,7 +671,7 @@ branch = "main"
 }
 
 func TestCustomRolesApplySQL_UpsertRigOptIn(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -718,7 +709,7 @@ branch = "main"
 }
 
 func TestCustomRolesApplySQL_DeleteRemovedRigOptIns(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[role]]
 name  = "reviewer"
 scope = "rig"
@@ -755,7 +746,7 @@ branch = "main"
 }
 
 func TestCustomRolesApplySQL_DeleteAllRigOptIns_WhenNoOptIns(t *testing.T) {
-	m := mustParseRoles(t, customRolesBase+`
+	m := parseSecretManifest(t, roleBase+`
 [[rig]]
 name   = "r"
 repo   = "/srv/r"
