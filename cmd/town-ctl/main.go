@@ -5,6 +5,7 @@
 //
 //	town-ctl apply [--file town.toml] [--dry-run] [--env NAME=VALUE...]
 //	               [--dolt-dsn DSN]
+//	town-ctl version
 //
 // The apply command:
 //  1. Parses and validates town.toml (JSON Schema + go-validator).
@@ -43,7 +44,7 @@ func main() {
 
 func run(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: town-ctl apply [flags]")
+		fmt.Fprintln(os.Stderr, "usage: town-ctl <apply|version> [flags]")
 		return 1
 	}
 	switch args[0] {
@@ -53,8 +54,11 @@ func run(args []string) int {
 			return 1
 		}
 		return 0
+	case "version":
+		fmt.Printf("%s\n", townctl.BinaryVersion)
+		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %q\nusage: town-ctl apply [flags]\n", args[0])
+		fmt.Fprintf(os.Stderr, "unknown command: %q\nusage: town-ctl <apply|version> [flags]\n", args[0])
 		return 1
 	}
 }
