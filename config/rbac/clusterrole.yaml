@@ -1,0 +1,16 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gastown-operator-clusterrole
+  labels:
+    app.kubernetes.io/name: gastown-operator
+    app.kubernetes.io/component: controller-manager
+rules:
+  # Manage cluster-scoped GasTown CRDs and their status/finalizers.
+  - apiGroups: ["gastown.tenev.io"]
+    resources: ["gastowns", "gastowns/status", "gastowns/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Leader-election leases for controller-runtime HA.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gastown-operator-clusterrolebinding
+  labels:
+    app.kubernetes.io/name: gastown-operator
+    app.kubernetes.io/component: controller-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gastown-operator-clusterrole
+subjects:
+  - kind: ServiceAccount
+    name: gastown-operator
+    namespace: system

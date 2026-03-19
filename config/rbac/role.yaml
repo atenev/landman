@@ -1,0 +1,46 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gastown-operator-role
+  namespace: system
+  labels:
+    app.kubernetes.io/name: gastown-operator
+    app.kubernetes.io/component: controller-manager
+rules:
+  # Manage namespaced Gas Town CRDs and their status/finalizers.
+  # NOTE: pods are explicitly omitted — the operator does not manage agent pods.
+  - apiGroups: ["gastown.tenev.io"]
+    resources:
+      - "rigs"
+      - "rigs/status"
+      - "rigs/finalizers"
+      - "agentroles"
+      - "agentroles/status"
+      - "agentroles/finalizers"
+      - "doltinstances"
+      - "doltinstances/status"
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Manage Dolt StatefulSet and Surveyor Deployment.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Manage Services, PVCs, and ConfigMaps (read access only for ConfigMaps).
+  - apiGroups: [""]
+    resources: ["services", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  # Read-only access to Secrets for API key injection via envFrom.
+  # The operator never writes or creates Secrets.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  # Emit events for controller lifecycle and error reporting.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # DDL init and migration Jobs for DoltInstance controller.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
