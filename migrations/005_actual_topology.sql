@@ -1,5 +1,5 @@
 -- Migration: 005_actual_topology
--- Issue:     dgt-fkm
+-- Issues:    dgt-fkm, dgt-7ve
 -- Purpose:   Create the actual_topology Dolt tables that Gas Town agents write
 --            as they act. The Surveyor diffs desired_topology against
 --            actual_topology to compute its reconcile plan (ADR-0002).
@@ -157,10 +157,10 @@ CREATE TABLE IF NOT EXISTS actual_custom_roles (
 -- ============================================================================
 INSERT INTO actual_topology_versions (table_name, schema_version, written_by)
 VALUES
-    ('actual_rigs',          1, 'migration/004'),
-    ('actual_agent_config',  1, 'migration/004'),
-    ('actual_worktrees',     1, 'migration/004'),
-    ('actual_custom_roles',  1, 'migration/004')
+    ('actual_rigs',          1, 'migration/005'),
+    ('actual_agent_config',  1, 'migration/005'),
+    ('actual_worktrees',     1, 'migration/005'),
+    ('actual_custom_roles',  1, 'migration/005')
 ON DUPLICATE KEY UPDATE
     schema_version = VALUES(schema_version),
     written_by     = VALUES(written_by),

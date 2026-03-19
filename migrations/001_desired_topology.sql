@@ -1,5 +1,5 @@
 -- Migration: 001_desired_topology
--- Issue:     dgt-9ft
+-- Issues:    dgt-9ft, dgt-ao3
 -- Purpose:   Create the desired_topology Dolt tables that town-ctl writes into
 --            as the coupling point between the actuator and Gas Town.
 --
@@ -41,14 +41,14 @@ CREATE TABLE IF NOT EXISTS desired_rigs (
 --   One row per (rig, role) pair.
 --   Roles: mayor, witness, refinery, deacon, polecat.
 --   A disabled role has no row — absence means disabled.
---   max_count is null for non-polecat roles (only polecats have a pool size).
+--   max_polecats is null for non-polecat roles (only polecats have a pool size).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS desired_agent_config (
     rig_name       VARCHAR(128)  NOT NULL,
     role           VARCHAR(64)   NOT NULL,       -- mayor|witness|refinery|deacon|polecat
     enabled        BOOLEAN       NOT NULL DEFAULT TRUE,
     model          VARCHAR(256),                 -- NULL means inherit from [defaults]
-    max_count      INT,                          -- only meaningful for polecat role
+    max_polecats   INT,                          -- only meaningful for polecat role
     claude_md_path TEXT,                         -- resolved path; NULL means built-in default
     PRIMARY KEY (rig_name, role),
     CONSTRAINT fk_agent_config_rig
@@ -86,3 +86,15 @@ ON DUPLICATE KEY UPDATE
     schema_version = VALUES(schema_version),
     written_by     = VALUES(written_by),
     written_at     = CURRENT_TIMESTAMP;
+
+-- ---------------------------------------------------------------------------
+-- DOWN migration
+-- ---------------------------------------------------------------------------
+-- Run these statements in reverse dependency order to roll back this migration.
+--
+--   DELETE FROM desired_topology_versions
+--     WHERE table_name IN ('desired_rigs', 'desired_agent_config', 'desired_formulas');
+--   DROP TABLE IF EXISTS desired_formulas;
+--   DROP TABLE IF EXISTS desired_agent_config;
+--   DROP TABLE IF EXISTS desired_rigs;
+--   DROP TABLE IF EXISTS desired_topology_versions;
