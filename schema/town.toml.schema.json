@@ -86,12 +86,33 @@
     "TownAgents": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Gas Town-level agents that run alongside gt.",
+      "description": "Gas Town-level agents that run alongside gt. town-ctl checks process liveness via the Dolt heartbeat table and launches missing agents during apply (ADR-0002, Decision 6).",
       "properties": {
         "surveyor": {
           "type": "boolean",
           "default": false,
-          "description": "Enable the Surveyor topology reconciler (ADR-0002)."
+          "description": "Enable the Surveyor topology reconciler (ADR-0002). town-ctl checks whether the Surveyor is running (via Dolt heartbeat table) and launches it if not."
+        },
+        "surveyor_model": {
+          "type": "string",
+          "description": "Claude model ID for the Surveyor agent. Defaults to [defaults].mayor_model when absent."
+        },
+        "surveyor_claude_md": {
+          "type": "string",
+          "description": "Path to the Surveyor's CLAUDE.md file. Defaults to ${GT_HOME}/roles/surveyor/CLAUDE.md when absent. Supports ${VAR} interpolation. Must resolve at apply time when set."
+        },
+        "surveyor_convergence_threshold": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "default": 0.95,
+          "description": "Fraction of desired topology rows that must match actual state for the Surveyor to consider reconciliation converged. Range: (0.0, 1.0]. Default: 0.95."
+        },
+        "surveyor_retry_count": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3,
+          "description": "Number of consecutive failed reconciliation cycles before the Surveyor files a priority-1 Deacon Bead. Default: 3."
         }
       }
     },

@@ -79,6 +79,15 @@ func validate(m *TownManifest) error {
 }
 
 func crossValidate(m *TownManifest) error {
+	// --- Surveyor lifecycle checks (ADR-0002, dgt-q8q) ---
+	// Only validate when non-zero (zero = absent → use built-in default).
+	if ct := m.Town.Agents.SurveyorConvergenceThreshold; ct != 0 && (ct <= 0 || ct > 1) {
+		return fmt.Errorf("[town.agents.surveyor_convergence_threshold] must be in (0.0, 1.0], got %v", ct)
+	}
+	if rc := m.Town.Agents.SurveyorRetryCount; rc != 0 && rc < 1 {
+		return fmt.Errorf("[town.agents.surveyor_retry_count] must be >= 1, got %d", rc)
+	}
+
 	// --- Rig uniqueness and interdependency checks ---
 	seenRig := make(map[string]struct{}, len(m.Rigs))
 	for i, rig := range m.Rigs {
@@ -190,6 +199,14 @@ func ValidateApplyTime(m *TownManifest) error {
 // The stat argument is called for each resolved claude_md path; return a
 // non-nil error to signal that the path does not exist.
 func ValidateApplyTimeFS(m *TownManifest, stat func(string) error) error {
+	// Check Surveyor CLAUDE.md when explicitly configured.
+	if p := m.Town.Agents.SurveyorClaudeMD; p != "" {
+		resolved := os.ExpandEnv(p)
+		if err := stat(resolved); err != nil {
+			return fmt.Errorf("[town.agents.surveyor_claude_md] path not found: %s", resolved)
+		}
+	}
+
 	for _, role := range m.Roles {
 		path := os.ExpandEnv(role.Identity.ClaudeMD)
 		if err := stat(path); err != nil {

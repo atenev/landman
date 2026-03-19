@@ -52,6 +52,27 @@ type TownCostConfig struct {
 type TownAgents struct {
 	// Surveyor enables the topology reconciler (ADR-0002).
 	Surveyor bool `toml:"surveyor" json:"surveyor"`
+
+	// SurveyorModel overrides the Claude model for the Surveyor agent.
+	// Defaults to the town-wide [defaults].mayor_model when absent.
+	SurveyorModel string `toml:"surveyor_model" json:"surveyor_model,omitempty"`
+
+	// SurveyorClaudeMD is the path to the Surveyor's CLAUDE.md file.
+	// Defaults to ${GT_HOME}/roles/surveyor/CLAUDE.md when absent.
+	// Path interpolation applies. Must resolve at apply time when set.
+	SurveyorClaudeMD string `toml:"surveyor_claude_md" json:"surveyor_claude_md,omitempty"`
+
+	// SurveyorConvergenceThreshold is the fraction of desired topology rows
+	// that must match actual state before the Surveyor considers reconciliation
+	// converged. Must be in (0.0, 1.0] when set. Defaults to 0.95 when absent
+	// (zero value). Cross-field validated in crossValidate.
+	SurveyorConvergenceThreshold float64 `toml:"surveyor_convergence_threshold" json:"surveyor_convergence_threshold,omitempty"`
+
+	// SurveyorRetryCount is the number of consecutive failed reconciliation
+	// cycles before the Surveyor files a priority-1 Deacon Bead. Must be >= 1
+	// when set. Defaults to 3 when absent (zero value). Cross-field validated
+	// in crossValidate.
+	SurveyorRetryCount int `toml:"surveyor_retry_count" json:"surveyor_retry_count,omitempty"`
 }
 
 // RigDefaults supplies values inherited by every rig unless overridden.

@@ -17,7 +17,9 @@ home = "/data/gt-prod"
 
 [town.agents]
 # Enable the Surveyor in production. Disabled in base (development uses manual apply).
+# town-ctl checks the Dolt heartbeat table and launches the Surveyor if not running.
 surveyor = true
+# surveyor_retry_count = 5   # raise from default 3 for noisier prod environments
 
 # Upgrade models for production quality.
 [defaults]

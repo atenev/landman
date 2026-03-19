@@ -911,3 +911,221 @@ func TestValidateApplyTime_NoRoles(t *testing.T) {
 		t.Fatalf("ValidateApplyTime should succeed with no roles: %v", err)
 	}
 }
+
+// ── Surveyor lifecycle tests (ADR-0002, dgt-q8q) ─────────────────────────────
+
+func TestParse_Surveyor_RicherConfig(t *testing.T) {
+	good := `
+version = "1"
+
+[town]
+name = "prod"
+home = "/opt/gt"
+
+  [town.agents]
+  surveyor                       = true
+  surveyor_model                 = "claude-sonnet-4-6"
+  surveyor_claude_md             = "/opt/gt/roles/surveyor/CLAUDE.md"
+  surveyor_convergence_threshold = 0.98
+  surveyor_retry_count           = 5
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`
+	m, err := manifest.Parse([]byte(good))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	a := m.Town.Agents
+	if !a.Surveyor {
+		t.Error("expected surveyor = true")
+	}
+	if a.SurveyorModel != "claude-sonnet-4-6" {
+		t.Errorf("surveyor_model = %q, want %q", a.SurveyorModel, "claude-sonnet-4-6")
+	}
+	if a.SurveyorClaudeMD != "/opt/gt/roles/surveyor/CLAUDE.md" {
+		t.Errorf("surveyor_claude_md = %q, want %q", a.SurveyorClaudeMD, "/opt/gt/roles/surveyor/CLAUDE.md")
+	}
+	if a.SurveyorConvergenceThreshold != 0.98 {
+		t.Errorf("surveyor_convergence_threshold = %v, want 0.98", a.SurveyorConvergenceThreshold)
+	}
+	if a.SurveyorRetryCount != 5 {
+		t.Errorf("surveyor_retry_count = %d, want 5", a.SurveyorRetryCount)
+	}
+}
+
+func TestParse_Surveyor_DefaultsAbsent(t *testing.T) {
+	// No [town.agents] block at all — all Surveyor fields should be zero values.
+	m, err := manifest.Parse([]byte(minimalValid))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	a := m.Town.Agents
+	if a.Surveyor {
+		t.Error("expected surveyor = false when absent")
+	}
+	if a.SurveyorModel != "" {
+		t.Errorf("surveyor_model should be empty when absent, got %q", a.SurveyorModel)
+	}
+	if a.SurveyorConvergenceThreshold != 0 {
+		t.Errorf("surveyor_convergence_threshold should be 0 when absent, got %v", a.SurveyorConvergenceThreshold)
+	}
+	if a.SurveyorRetryCount != 0 {
+		t.Errorf("surveyor_retry_count should be 0 when absent, got %d", a.SurveyorRetryCount)
+	}
+}
+
+func TestParse_Surveyor_ConvergenceThresholdAboveOneRejected(t *testing.T) {
+	bad := `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+  [town.agents]
+  surveyor                       = true
+  surveyor_convergence_threshold = 1.5
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for surveyor_convergence_threshold=1.5 (> 1.0), got nil")
+	}
+}
+
+func TestParse_Surveyor_ConvergenceThresholdNegativeRejected(t *testing.T) {
+	bad := `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+  [town.agents]
+  surveyor                       = true
+  surveyor_convergence_threshold = -0.5
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for surveyor_convergence_threshold=-0.5 (< 0), got nil")
+	}
+}
+
+func TestParse_Surveyor_RetryCountNegativeRejected(t *testing.T) {
+	bad := `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+  [town.agents]
+  surveyor             = true
+  surveyor_retry_count = -1
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for surveyor_retry_count=-1, got nil")
+	}
+}
+
+func TestValidateApplyTime_SurveyorClaudeMDExists(t *testing.T) {
+	m, err := manifest.Parse([]byte(`
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+  [town.agents]
+  surveyor           = true
+  surveyor_claude_md = "/opt/gt/roles/surveyor/CLAUDE.md"
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	existsStat := func(path string) error { return nil }
+	if err := manifest.ValidateApplyTimeFS(m, existsStat); err != nil {
+		t.Fatalf("unexpected error when surveyor_claude_md path exists: %v", err)
+	}
+}
+
+func TestValidateApplyTime_SurveyorClaudeMDNotFound(t *testing.T) {
+	m, err := manifest.Parse([]byte(`
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+  [town.agents]
+  surveyor           = true
+  surveyor_claude_md = "/opt/gt/roles/surveyor/CLAUDE.md"
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	missingErr := fmt.Errorf("no such file")
+	missingStat := func(path string) error { return missingErr }
+	applyErr := manifest.ValidateApplyTimeFS(m, missingStat)
+	if applyErr == nil {
+		t.Fatal("expected error for missing surveyor_claude_md path, got nil")
+	}
+	if !strings.Contains(applyErr.Error(), "surveyor_claude_md") {
+		t.Errorf("error should mention 'surveyor_claude_md', got: %v", applyErr)
+	}
+}
+
+func TestValidateApplyTime_SurveyorClaudeMDAbsentNoCheck(t *testing.T) {
+	// When surveyor_claude_md is not set, no stat call should happen for it.
+	m, err := manifest.Parse([]byte(`
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+  [town.agents]
+  surveyor = true
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+`))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	// stat always fails — if called for the surveyor path it would fail the test.
+	alwaysMissing := func(path string) error { return fmt.Errorf("no such file: %s", path) }
+	if err := manifest.ValidateApplyTimeFS(m, alwaysMissing); err != nil {
+		t.Fatalf("ValidateApplyTimeFS should not check surveyor_claude_md when absent: %v", err)
+	}
+}

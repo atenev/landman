@@ -1,7 +1,8 @@
 # Multi-rig production configuration.
 #
 # Shows defaults inheritance, per-rig model overrides for cost control,
-# enabled=false for maintenance, cost policy budgets, and multiple formulas.
+# enabled=false for maintenance, cost policy budgets, multiple formulas,
+# and custom [[role]] definitions (ADR-0004).
 # This file is the base config checked into the repository. Secrets are
 # injected via env vars at apply time.
 
@@ -13,12 +14,32 @@ home      = "${GT_HOME}"      # ${GT_HOME} is set in the operator's shell profil
 dolt_port = 3306
 
 # [town.agents] controls which Gas Town infrastructure services run alongside gt.
+# town-ctl checks whether each enabled agent is running (via the Dolt heartbeat
+# table) and launches it if not. Agents self-sustain after launch — town-ctl
+# does not need to be called again unless the topology changes.
 [town.agents]
-# surveyor = true launches the Surveyor topology reconciler process.
-# town-ctl apply checks whether the Surveyor is running and starts it if not.
-# Once running, the Surveyor self-triggers via the Dolt change feed — it does
-# not need to be called again by town-ctl.
+# surveyor = true enables the Surveyor topology reconciler (ADR-0002).
 surveyor = true
+
+# surveyor_model overrides the Claude model for the Surveyor agent.
+# Defaults to [defaults].mayor_model (claude-opus-4-6 in this config).
+# Uncomment to use a cheaper model if reconciliation latency is not critical:
+# surveyor_model = "claude-sonnet-4-6"
+
+# surveyor_claude_md points to the Surveyor's CLAUDE.md identity file.
+# Defaults to ${GT_HOME}/roles/surveyor/CLAUDE.md when absent.
+# Override only when you need a custom system prompt for the Surveyor:
+# surveyor_claude_md = "${GT_HOME}/roles/surveyor/custom/CLAUDE.md"
+
+# surveyor_convergence_threshold controls how much of the desired topology must
+# match actual state before the Surveyor considers reconciliation converged.
+# Range: (0.0, 1.0]. Default: 0.95.
+# Lower this only if transient partial convergence is acceptable:
+# surveyor_convergence_threshold = 0.95
+
+# surveyor_retry_count is the number of consecutive failed reconciliation cycles
+# before the Surveyor files a priority-1 Deacon Bead. Default: 3.
+# surveyor_retry_count = 3
 
 # [defaults] provides values inherited by every rig unless overridden at the
 # rig level. Changing a default here propagates to all rigs on the next apply.
@@ -69,6 +90,9 @@ deacon       = true
 polecat_model = "claude-haiku-4-5-20251001"
 # Override max_polecats to limit parallelism on this lower-traffic service.
 max_polecats  = 10
+# Opt into rig-scoped custom roles defined in the [[role]] blocks below.
+# Only roles with scope="rig" require opt-in; town-scoped roles activate automatically.
+roles = ["reviewer", "security-scanner"]
 
 # per-rig cost override: stricter budget than the [defaults.cost] block
 [rig.cost]
@@ -124,3 +148,90 @@ mayor_claude_md = "${GT_HOME}/roles/mayor/data-pipeline/CLAUDE.md"
 [[rig.formula]]
 name     = "schema-migration-check"
 schedule = "0 6 * * *"   # daily at 06:00 UTC: check migration status and report to Mayor
+
+
+# --- Custom Roles (ADR-0004) ---
+#
+# Roles are defined once here and activated per-rig via [rig.agents].roles
+# (scope="rig") or automatically on every rig (scope="town").
+# Every custom role must declare a supervision.parent (built-in or custom).
+# town-ctl resolves [role.identity].claude_md at apply time — the file must exist.
+
+# Example 1: reviewer — rig-scoped, ephemeral, bead_assigned trigger.
+#
+# Wakes whenever a Bead is created with assignee="reviewer" on an opted-in rig.
+# Supervised by the Witness, which tracks its lifecycle like a Polecat.
+# Opted into by rig "api" via [rig.agents].roles = ["reviewer", ...].
+[[role]]
+name        = "reviewer"
+description = "Code review agent: reads a PR diff, leaves inline comments, and approves or requests changes via a Mayor Bead."
+scope       = "rig"
+lifespan    = "ephemeral"
+
+[role.identity]
+# CLAUDE.md path uses the ${GT_HOME}/roles/<name>/CLAUDE.md convention.
+# Supports ${VAR} interpolation. Must resolve at apply time.
+claude_md = "${GT_HOME}/roles/reviewer/CLAUDE.md"
+# Inherit polecat_model from [defaults] — no model override needed here.
+
+[role.trigger]
+type = "bead_assigned"   # spawned when a Bead with assignee="reviewer" appears
+
+[role.supervision]
+parent = "witness"   # Witness tracks this role like an ephemeral Polecat
+
+[role.resources]
+max_instances = 3   # allow up to 3 parallel reviews per rig
+
+
+# Example 2: security-scanner — rig-scoped, ephemeral, event trigger.
+#
+# Fires on every "branch_created" event Bead. Scans the new branch for
+# security regressions and files a Bead for the Mayor if issues are found.
+# Supervised by Deacon (health daemon), which manages patrol-style agents.
+# Opted into by rig "api" via [rig.agents].roles = [..., "security-scanner"].
+[[role]]
+name        = "security-scanner"
+description = "Triggered on branch creation; runs a security audit and files a Bead if regressions are found."
+scope       = "rig"
+lifespan    = "ephemeral"
+
+[role.identity]
+claude_md = "${GT_HOME}/roles/security-scanner/CLAUDE.md"
+model     = "claude-sonnet-4-6"   # explicit model: balanced between speed and accuracy
+
+[role.trigger]
+type  = "event"
+event = "branch_created"   # polls for event Beads with type="branch_created"
+
+[role.supervision]
+parent = "deacon"   # Deacon manages patrol-style agents
+
+[role.resources]
+max_instances = 1   # serialise scans to avoid duplicate reports
+
+
+# Example 3: planner — town-scoped, persistent, bead_assigned trigger.
+#
+# Town-scoped: active on every rig automatically — no [rig.agents].roles entry needed.
+# Persistent: long-lived process; stays running between tasks.
+# Receives high-level "epic" Beads from the Mayor and decomposes them into tasks.
+[[role]]
+name        = "planner"
+description = "Receives epic Beads from the Mayor and decomposes them into concrete task Beads for Polecats."
+scope       = "town"
+lifespan    = "persistent"
+
+[role.identity]
+claude_md = "${GT_HOME}/roles/planner/CLAUDE.md"
+model     = "claude-opus-4-6"   # planning benefits from the most capable model
+
+[role.trigger]
+type = "bead_assigned"   # wakes when a Bead with assignee="planner" arrives
+
+[role.supervision]
+parent     = "mayor"      # Mayor assigns epics; escalations go back to Mayor
+reports_to = "mayor"      # explicit: same as parent (shown for documentation clarity)
+
+[role.resources]
+max_instances = 1   # single planner per town; serialises decomposition
