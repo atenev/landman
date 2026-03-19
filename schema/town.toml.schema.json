@@ -65,6 +65,21 @@
         },
         "agents": {
           "$ref": "#/$defs/TownAgents"
+        },
+        "cost": {
+          "$ref": "#/$defs/TownCostConfig"
+        }
+      }
+    },
+    "TownCostConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Town-level operational cost control parameters (ADR-0006). Controls Deacon's cost patrol behaviour, not the per-rig spend limits (which are declared in [rig.cost] and [defaults.cost]).",
+      "properties": {
+        "patrol_interval_seconds": {
+          "type": "integer",
+          "minimum": 10,
+          "description": "How often Deacon runs the cost patrol query, in seconds. Must be >= 10 when set. Defaults to 300 (5 minutes) if absent."
         }
       }
     },
