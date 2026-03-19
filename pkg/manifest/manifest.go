@@ -110,6 +110,22 @@ type RigSpec struct {
 	// Cost is the per-rig daily budget policy (overrides [defaults.cost]).
 	// Cross-field validation in crossValidate.
 	Cost CostPolicy `toml:"cost" json:"cost,omitempty"`
+	// Role is a reserved extension slot for future per-rig inline role
+	// definitions (dgt-bfp). Accepted by the parser; town-ctl emits a warning
+	// and ignores entries at apply time. Use global [[role]] entries with
+	// scope="rig" for the current custom-role mechanism (ADR-0004).
+	Role []RigRoleSlot `toml:"role" json:"role,omitempty"`
+}
+
+// RigRoleSlot is a reserved extension placeholder for future per-rig role
+// definitions. It accepts any TOML keys without error so that users who
+// speculatively add [[rig.role]] blocks do not get parse failures. town-ctl
+// logs a warning and does not process these entries (ADR-0004 extension point,
+// tracked by dgt-bfp).
+type RigRoleSlot struct {
+	// Name holds the optional name field for diagnostic messages. All other
+	// keys in the block are silently accepted by the TOML decoder.
+	Name string `toml:"name" json:"name,omitempty"`
 }
 
 // AgentConfig specifies which agent roles are active on a rig and their

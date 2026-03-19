@@ -61,3 +61,10 @@ schedule = "0 1 * * *"   # nightly at 01:00 UTC
 [[rig.formula]]
 name     = "weekly-security-scan"
 schedule = "0 4 * * 0"   # Sunday at 04:00 UTC
+
+# [[rig.role]] is a reserved extension slot (dgt-bfp). Uncomment once per-rig
+# inline role definitions are implemented. For now, use global [[role]] entries
+# with scope="rig" and opt in via [rig.agents].roles (ADR-0004).
+#
+# [[rig.role]]
+# name = "example-future-role"

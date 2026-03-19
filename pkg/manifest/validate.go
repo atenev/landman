@@ -216,6 +216,36 @@ func ValidateApplyTimeFS(m *TownManifest, stat func(string) error) error {
 	return nil
 }
 
+// WarnExtensionSlots returns a warning message for each non-empty extension
+// placeholder slot encountered in m. Callers (town-ctl apply) should log these
+// before proceeding with the apply — the blocks are accepted by the parser but
+// ignored at apply time.
+//
+// Extension slots:
+//   - [[rig.role]]: reserved for future per-rig inline role definitions (dgt-bfp).
+//     Use global [[role]] entries with scope="rig" via ADR-0004 instead.
+func WarnExtensionSlots(m *TownManifest) []string {
+	var warnings []string
+	for _, rig := range m.Rigs {
+		if len(rig.Role) == 0 {
+			continue
+		}
+		name := rig.Name
+		for _, slot := range rig.Role {
+			detail := ""
+			if slot.Name != "" {
+				detail = fmt.Sprintf(" (name=%q)", slot.Name)
+			}
+			warnings = append(warnings, fmt.Sprintf(
+				"[rig.%s] [[rig.role]]%s: extension slot not yet implemented — "+
+					"ignored at apply time. Use global [[role]] with scope=\"rig\" instead.",
+				name, detail,
+			))
+		}
+	}
+	return warnings
+}
+
 // validateCostPolicy checks mutual exclusion of budget fields and warn_at_pct range.
 func validateCostPolicy(c CostPolicy, ctx string) error {
 	var setFields []string

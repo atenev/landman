@@ -199,6 +199,12 @@
         "cost": {
           "$ref": "#/$defs/CostPolicy",
           "description": "Per-rig daily budget policy. Overrides [defaults.cost]. Exactly one budget field must be set."
+        },
+        "role": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RigRoleSlot" },
+          "description": "Reserved extension slot for future per-rig inline role definitions (dgt-bfp). Accepted by the parser; town-ctl logs a warning and ignores these entries at apply time. Use global [[role]] entries with scope=\"rig\" and opt in via [rig.agents].roles instead (ADR-0004).",
+          "default": []
         }
       }
     },
@@ -370,6 +376,16 @@
           "minimum": 1,
           "default": 1,
           "description": "Maximum number of simultaneous instances of this role. Default 1."
+        }
+      }
+    },
+    "RigRoleSlot": {
+      "type": "object",
+      "description": "Reserved extension slot for a future per-rig inline role definition (dgt-bfp). All properties are accepted by the schema but ignored by town-ctl at apply time. Use global [[role]] entries with scope=\"rig\" via ADR-0004 instead.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Optional name, included in the town-ctl warning message when this slot is populated."
         }
       }
     },

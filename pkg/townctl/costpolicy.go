@@ -90,7 +90,9 @@ func ApplySQL(m *manifest.TownManifest) []string {
 	stmts := make([]string, 0, 2+len(desired))
 
 	// 1. ADR-0003: versions row first in every transaction touching this table.
-	stmts = append(stmts, desiredTopologyVersionsUpsert())
+	stmts = append(stmts, TopologyVersionsUpsert([]TableSchemaVersion{
+		{Table: "desired_cost_policy", Version: costPolicySchemaVersion},
+	}))
 
 	// 2. Upsert the desired rows.
 	for _, row := range desired {
@@ -102,16 +104,6 @@ func ApplySQL(m *manifest.TownManifest) []string {
 	stmts = append(stmts, cleanupRows(desired))
 
 	return stmts
-}
-
-func desiredTopologyVersionsUpsert() string {
-	return fmt.Sprintf(
-		"INSERT INTO desired_topology_versions (table_name, schema_version, written_by)"+
-			" VALUES ('desired_cost_policy', %d, 'town-ctl/apply')"+
-			" ON DUPLICATE KEY UPDATE schema_version = VALUES(schema_version),"+
-			" written_by = VALUES(written_by), written_at = CURRENT_TIMESTAMP;",
-		costPolicySchemaVersion,
-	)
 }
 
 func upsertRow(r CostPolicyRow) string {
