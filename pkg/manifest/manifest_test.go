@@ -1129,3 +1129,108 @@ branch = "main"
 		t.Fatalf("ValidateApplyTimeFS should not check surveyor_claude_md when absent: %v", err)
 	}
 }
+
+// ── WarnExtensionSlots (dgt-su1) ─────────────────────────────────────────────
+
+func TestWarnExtensionSlots_NoSlots(t *testing.T) {
+	m, err := manifest.Parse([]byte(minimalValid))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	warnings := manifest.WarnExtensionSlots(m)
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings for manifest with no extension slots, got: %v", warnings)
+	}
+}
+
+func TestWarnExtensionSlots_RigRoleSlotProducesWarning(t *testing.T) {
+	tomlStr := `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+[[rig]]
+name   = "backend"
+repo   = "/srv/backend"
+branch = "main"
+
+  [[rig.role]]
+  name = "future-role"
+`
+	m, err := manifest.Parse([]byte(tomlStr))
+	if err != nil {
+		t.Fatalf("unexpected parse error (rig.role should be accepted): %v", err)
+	}
+	warnings := manifest.WarnExtensionSlots(m)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning for [[rig.role]] slot, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "extension slot not yet implemented") {
+		t.Errorf("warning should mention 'extension slot not yet implemented', got: %s", warnings[0])
+	}
+	if !strings.Contains(warnings[0], "future-role") {
+		t.Errorf("warning should mention the role name 'future-role', got: %s", warnings[0])
+	}
+}
+
+func TestWarnExtensionSlots_MultipleRigRoleSlots(t *testing.T) {
+	tomlStr := `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+[[rig]]
+name   = "backend"
+repo   = "/srv/backend"
+branch = "main"
+
+  [[rig.role]]
+  name = "role-a"
+
+  [[rig.role]]
+  name = "role-b"
+
+[[rig]]
+name   = "docs"
+repo   = "/srv/docs"
+branch = "main"
+`
+	m, err := manifest.Parse([]byte(tomlStr))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	warnings := manifest.WarnExtensionSlots(m)
+	// backend has 2 slots, docs has 0 → 2 warnings total.
+	if len(warnings) != 2 {
+		t.Fatalf("expected 2 warnings (2 slots on backend rig), got %d: %v", len(warnings), warnings)
+	}
+}
+
+func TestWarnExtensionSlots_AnonymousRigRoleSlot(t *testing.T) {
+	tomlStr := `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+[[rig]]
+name   = "backend"
+repo   = "/srv/backend"
+branch = "main"
+
+  [[rig.role]]
+`
+	m, err := manifest.Parse([]byte(tomlStr))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	warnings := manifest.WarnExtensionSlots(m)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning for anonymous [[rig.role]] slot, got %d: %v", len(warnings), warnings)
+	}
+}
