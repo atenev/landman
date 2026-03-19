@@ -1,4 +1,4 @@
--- Migration: 004_actual_topology
+-- Migration: 005_actual_topology
 -- Issue:     dgt-fkm
 -- Purpose:   Create the actual_topology Dolt tables that Gas Town agents write
 --            as they act. The Surveyor diffs desired_topology against
