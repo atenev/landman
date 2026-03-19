@@ -145,11 +145,8 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 
 // applyTransaction builds and executes the full atomic Dolt transaction for m.
 func applyTransaction(db *DB, m *manifest.TownManifest, manifestPath string) error {
-	// Build the ordered statement list:
-	//   topology tables (desired_rigs, desired_agent_config, etc.)
-	// + cost policy (desired_cost_policy)
-	stmts := ApplyTopologySQL(m)
-	stmts = append(stmts, ApplySQL(m)...)
+	// Build the ordered statement list across all topology tables.
+	stmts := FullApplySQL(m)
 
 	// Compute human-readable change count for the commit message.
 	addUpdateRemove := fmt.Sprintf("[%d stmts]", len(stmts))
@@ -173,24 +170,21 @@ func printDryRun(m *manifest.TownManifest, manifestPath string) error {
 	fmt.Printf("town-ctl dry-run: %s\n", manifestPath)
 	fmt.Printf("rigs: %d  roles: %d\n\n", len(m.Rigs), len(m.Roles))
 
-	// For dry-run we show the intended state without a current-state diff,
-	// since we have no Dolt connection. Print each rig and role as an "add".
-	var ops []TopologyOp
+	// For --dry-run without a Dolt connection we treat every desired resource
+	// as an "add" (no current state to diff against).
+	var topoOps []TopologyOp
 	for _, rig := range m.Rigs {
-		ops = append(ops, TopologyOp{
+		topoOps = append(topoOps, TopologyOp{
 			Action: "add",
 			Table:  "desired_rigs",
 			Key:    fmt.Sprintf("name=%s repo=%s branch=%s enabled=%t", rig.Name, rig.Repo, rig.Branch, rig.Enabled),
 		})
 	}
-	for _, role := range m.Roles {
-		ops = append(ops, TopologyOp{
-			Action: "add",
-			Table:  "desired_custom_roles",
-			Key:    fmt.Sprintf("name=%s scope=%s trigger=%s", role.Name, role.Scope, role.Trigger.Type),
-		})
-	}
-	fmt.Print(FormatTopologyDryRun(ops))
+	fmt.Print(FormatTopologyDryRun(topoOps))
+
+	// Custom roles dry-run uses the structured diff formatter.
+	customDiff := DiffCustomRoles(m, nil, nil)
+	fmt.Print(FormatCustomRolesDryRun(customDiff))
 
 	costOps := DryRunPlan(m, nil)
 	fmt.Print(FormatDryRun(costOps))
