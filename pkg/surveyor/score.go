@@ -118,6 +118,18 @@ type DesiredRig struct {
 	WitnessEnabled bool
 }
 
+// DesiredFormula describes one desired formula schedule entry for scoring.
+// Formula convergence is satisfied when the formula's rig is running (Mayor
+// healthy and rig status=running). This is the schedule-entry-existence proxy
+// until an actual_formulas table is available (surveyor-topology-reconciler
+// spec task 3.3).
+type DesiredFormula struct {
+	// RigName is the rig that owns this formula.
+	RigName string
+	// Name is the formula identifier within the rig.
+	Name string
+}
+
 // DesiredCustomRole describes one desired custom role instance for scoring.
 type DesiredCustomRole struct {
 	Name          string
@@ -163,6 +175,7 @@ type ScoreResult struct {
 func ComputeScore(
 	desired []DesiredRig,
 	desiredCustomRoles []DesiredCustomRole,
+	desiredFormulas []DesiredFormula,
 	actual ActualTopology,
 	cfg VerifyConfig,
 	now time.Time,
@@ -241,6 +254,22 @@ func ComputeScore(
 				res.NonConverged = append(res.NonConverged,
 					fmt.Sprintf("custom-role-rig/%s/%s[%d]: not converged", dcr.RigName, dcr.Name, dcr.InstanceIndex))
 			}
+		}
+	}
+
+	// Score each desired formula: converged when the formula's rig is running
+	// (Mayor healthy and rig status=running within StaleTTL). This is the
+	// schedule-entry-existence proxy until actual_formulas is available.
+	for _, df := range desiredFormulas {
+		res.FormulaTotal++
+		if scoreRig(
+			DesiredRig{Name: df.RigName, Enabled: true},
+			actualRigByName, actualAgentsByRig, cfg.StaleTTL, now,
+		) {
+			res.FormulaPass++
+		} else {
+			res.NonConverged = append(res.NonConverged,
+				fmt.Sprintf("formula/%s/%s: rig not converged", df.RigName, df.Name))
 		}
 	}
 
