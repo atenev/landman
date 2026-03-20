@@ -8,6 +8,7 @@ package townctl
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/tenev/dgt/pkg/manifest"
@@ -59,6 +60,48 @@ func ResolveCustomRoles(m *manifest.TownManifest) []CustomRoleRow {
 		rows = append(rows, roleSpecToRow(r))
 	}
 	return rows
+}
+
+// MergeAndWriteExtendsChains resolves the extends chain for each [[role]] that
+// declares identity.extends, merges all CLAUDE.md files in the chain, and
+// writes the merged content to <gtHome>/roles/merged/<name>.md (ADR-0005).
+//
+// The role's identity.ClaudeMD is updated in-place to the merged file path so
+// that subsequent SQL generation (via ResolveCustomRoles / roleSpecToRow) stores
+// the correct merged path in desired_custom_roles.claude_md_path.
+//
+// Roles without extends are not modified. gtHome is expanded via os.ExpandEnv
+// before use.
+func MergeAndWriteExtendsChains(m *manifest.TownManifest, gtHome string) error {
+	mergedDir := filepath.Join(os.ExpandEnv(gtHome), "roles", "merged")
+
+	for i, role := range m.Roles {
+		if role.Identity.Extends == "" {
+			continue
+		}
+
+		chain, err := manifest.ResolveExtendsChain(role.Name, m.Roles)
+		if err != nil {
+			return fmt.Errorf("role %q: resolve extends chain: %w", role.Name, err)
+		}
+
+		merged, err := manifest.MergeExtendsChain(chain)
+		if err != nil {
+			return fmt.Errorf("role %q: merge extends chain: %w", role.Name, err)
+		}
+
+		if err := os.MkdirAll(mergedDir, 0o755); err != nil {
+			return fmt.Errorf("role %q: create merged dir %s: %w", role.Name, mergedDir, err)
+		}
+
+		mergedPath := filepath.Join(mergedDir, role.Name+".md")
+		if err := os.WriteFile(mergedPath, []byte(merged), 0o644); err != nil {
+			return fmt.Errorf("role %q: write merged CLAUDE.md %s: %w", role.Name, mergedPath, err)
+		}
+
+		m.Roles[i].Identity.ClaudeMD = mergedPath
+	}
+	return nil
 }
 
 // ResolveRigCustomRoles returns the set of (rig, role) opt-in pairs for

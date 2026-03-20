@@ -1,9 +1,12 @@
 package townctl_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/tenev/dgt/pkg/manifest"
 	"github.com/tenev/dgt/pkg/townctl"
 )
 
@@ -836,4 +839,204 @@ func TestFormatCustomRolesDryRun_RigOptInRemovePrefix(t *testing.T) {
 	if !strings.Contains(out, "- desired_rig_custom_roles") {
 		t.Errorf("expected '-' prefix for rig opt-in remove, got: %q", out)
 	}
+}
+
+// ── MergeAndWriteExtendsChains ───────────────────────────────────────────────
+
+// makeExtendsManifest builds a TownManifest with two roles: base (no extends)
+// and derived (extends=base). Both claude_md files are written to dir so that
+// ValidateApplyTime passes. Returns the manifest and the dir.
+func makeExtendsManifest(t *testing.T, dir string) *manifest.TownManifest {
+	t.Helper()
+	baseMD := filepath.Join(dir, "base.md")
+	derivedMD := filepath.Join(dir, "derived.md")
+	if err := os.WriteFile(baseMD, []byte("# Base instructions"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(derivedMD, []byte("# Derived override"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	toml := `version = "1"
+
+[town]
+name = "t"
+home = "` + dir + `"
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+
+[[role]]
+name  = "base"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "` + baseMD + `"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+
+[[role]]
+name  = "derived"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "` + derivedMD + `"
+  extends   = "base"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+`
+	m, err := manifest.Parse([]byte(toml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	return m
+}
+
+func TestMergeAndWriteExtendsChains_NoExtends_IsNoop(t *testing.T) {
+	dir := t.TempDir()
+	claudeMD := filepath.Join(dir, "role.md")
+	if err := os.WriteFile(claudeMD, []byte("# Role"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := parseSecretManifest(t, customRoleBase+`
+[[role]]
+name  = "reviewer"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "`+claudeMD+`"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+`)
+	origPath := m.Roles[0].Identity.ClaudeMD
+	if err := townctl.MergeAndWriteExtendsChains(m, dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Roles[0].Identity.ClaudeMD != origPath {
+		t.Errorf("role without extends should not be modified: got %q, want %q",
+			m.Roles[0].Identity.ClaudeMD, origPath)
+	}
+}
+
+func TestMergeAndWriteExtendsChains_SingleHop_WritesMergedFile(t *testing.T) {
+	dir := t.TempDir()
+	m := makeExtendsManifest(t, dir)
+
+	if err := townctl.MergeAndWriteExtendsChains(m, dir); err != nil {
+		t.Fatalf("MergeAndWriteExtendsChains: %v", err)
+	}
+
+	// Merged file must exist at <dir>/roles/merged/derived.md.
+	mergedPath := filepath.Join(dir, "roles", "merged", "derived.md")
+	data, err := os.ReadFile(mergedPath)
+	if err != nil {
+		t.Fatalf("merged file not written: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "Base instructions") {
+		t.Errorf("merged file missing base content; got: %q", content)
+	}
+	if !strings.Contains(content, "Derived override") {
+		t.Errorf("merged file missing derived content; got: %q", content)
+	}
+	// Base content must appear before derived content.
+	if strings.Index(content, "Base instructions") > strings.Index(content, "Derived override") {
+		t.Error("base content should appear before derived content in merged file")
+	}
+}
+
+func TestMergeAndWriteExtendsChains_UpdatesClaudeMDPath(t *testing.T) {
+	dir := t.TempDir()
+	m := makeExtendsManifest(t, dir)
+
+	if err := townctl.MergeAndWriteExtendsChains(m, dir); err != nil {
+		t.Fatalf("MergeAndWriteExtendsChains: %v", err)
+	}
+
+	// Find derived role and verify its ClaudeMD was updated to the merged path.
+	mergedPath := filepath.Join(dir, "roles", "merged", "derived.md")
+	var derivedRole *manifest.RoleSpec
+	for i, r := range m.Roles {
+		if r.Name == "derived" {
+			derivedRole = &m.Roles[i]
+			break
+		}
+	}
+	if derivedRole == nil {
+		t.Fatal("derived role not found in manifest")
+	}
+	if derivedRole.Identity.ClaudeMD != mergedPath {
+		t.Errorf("derived role ClaudeMD not updated: got %q, want %q",
+			derivedRole.Identity.ClaudeMD, mergedPath)
+	}
+}
+
+func TestMergeAndWriteExtendsChains_BaseRoleUnmodified(t *testing.T) {
+	dir := t.TempDir()
+	m := makeExtendsManifest(t, dir)
+
+	baseMD := m.Roles[0].Identity.ClaudeMD // save original base path
+	if m.Roles[0].Name != "base" {
+		t.Skip("role ordering assumption violated")
+	}
+
+	if err := townctl.MergeAndWriteExtendsChains(m, dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if m.Roles[0].Identity.ClaudeMD != baseMD {
+		t.Errorf("base role (no extends) should not be modified: got %q, want %q",
+			m.Roles[0].Identity.ClaudeMD, baseMD)
+	}
+}
+
+func TestMergeAndWriteExtendsChains_MissingBaseFile_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	m := makeExtendsManifest(t, dir)
+
+	// Remove the base role's CLAUDE.md to force a read error during merge.
+	baseMD := m.Roles[0].Identity.ClaudeMD
+	if err := os.Remove(baseMD); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := townctl.MergeAndWriteExtendsChains(m, dir); err == nil {
+		t.Error("expected error when base CLAUDE.md is missing, got nil")
+	}
+}
+
+func TestMergeAndWriteExtendsChains_ResolveCustomRoles_UsesUpdatedPath(t *testing.T) {
+	dir := t.TempDir()
+	m := makeExtendsManifest(t, dir)
+
+	if err := townctl.MergeAndWriteExtendsChains(m, dir); err != nil {
+		t.Fatalf("MergeAndWriteExtendsChains: %v", err)
+	}
+
+	// ResolveCustomRoles must return the merged path for the derived role.
+	mergedPath := filepath.Join(dir, "roles", "merged", "derived.md")
+	rows := townctl.ResolveCustomRoles(m)
+	for _, row := range rows {
+		if row.Name == "derived" {
+			if row.ClaudeMDPath != mergedPath {
+				t.Errorf("ResolveCustomRoles: derived ClaudeMDPath = %q, want %q",
+					row.ClaudeMDPath, mergedPath)
+			}
+			return
+		}
+	}
+	t.Error("derived role not found in ResolveCustomRoles output")
 }

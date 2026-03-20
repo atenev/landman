@@ -107,6 +107,15 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 		return fmt.Errorf("%s: apply-time validation: %w", manifestPath, err)
 	}
 
+	// Step 5c — Merge extends chains (ADR-0005): for each [[role]] that declares
+	// identity.extends, merge the CLAUDE.md chain and write to
+	// ${GT_HOME}/roles/merged/<name>.md. Updates role.Identity.ClaudeMD in-place
+	// so that SQL generation stores the merged path in desired_custom_roles.
+	gtHome := os.ExpandEnv(m.Town.Home)
+	if err := MergeAndWriteExtendsChains(m, gtHome); err != nil {
+		return fmt.Errorf("%s: extends merge: %w", manifestPath, err)
+	}
+
 	// Emit warnings for unrecognised extension slots.
 	for _, warn := range manifest.WarnExtensionSlots(m) {
 		fmt.Fprintf(os.Stderr, "town-ctl: WARNING: %s\n", warn)
