@@ -137,6 +137,15 @@ func applyCmd(args []string) error {
 		return fmt.Errorf("secrets: %w", err)
 	}
 
+	// 5c. Merge extends chains: for each [[role]] that declares identity.extends,
+	// merge the CLAUDE.md chain and write to ${GT_HOME}/roles/merged/<name>.md.
+	// Updates role.Identity.ClaudeMD in-place so SQL generation stores the merged
+	// path in desired_custom_roles.
+	gtHome := os.ExpandEnv(m.Town.Home)
+	if err := townctl.MergeAndWriteExtendsChains(m, gtHome); err != nil {
+		return fmt.Errorf("extends merge: %w", err)
+	}
+
 	// 6. Determine Dolt DSN.
 	dsn := f.doltDSN
 	if dsn == "" {
