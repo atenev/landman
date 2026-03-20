@@ -115,6 +115,11 @@ func (r *GasTownReconciler) syncToDolt(
 	dolt *doltClient,
 	gt *gasv1alpha1.GasTown,
 ) (string, error) {
+	// Pre-flight: ensure no CLI write is in progress (dgt-lc3).
+	if err := checkTopologyLock(ctx, dolt.db); err != nil {
+		return "", err
+	}
+
 	tx, err := dolt.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", fmt.Errorf("begin transaction: %w", err)
@@ -125,6 +130,11 @@ func (r *GasTownReconciler) syncToDolt(
 	if err := upsertTopologyVersions(ctx, tx, []tableVersion{
 		{Table: "desired_town", Version: 1},
 	}); err != nil {
+		return "", err
+	}
+
+	// Claim advisory write lock (dgt-lc3).
+	if err := upsertTopologyLock(ctx, tx); err != nil {
 		return "", err
 	}
 

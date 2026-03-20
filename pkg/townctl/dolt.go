@@ -8,6 +8,7 @@ package townctl
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	// Register the MySQL driver for Dolt's MySQL-wire protocol.
 	_ "github.com/go-sql-driver/mysql"
@@ -64,4 +65,43 @@ func SetCommitMessage(tx *sql.Tx, msg string) error {
 	_, err := tx.Exec(fmt.Sprintf("SET @dolt_transaction_commit_message = '%s';",
 		escapeSQLString(msg)))
 	return err
+}
+
+// topologyLockTTL is the window during which a lock held by a different
+// component is considered "live" and causes CheckTopologyLock to fail.
+const topologyLockTTL = 30 * time.Second
+
+// CheckTopologyLock reads the desired_topology_lock sentinel row and returns
+// an error if a different component holds the lock within topologyLockTTL.
+// Call this before ExecTransaction to detect concurrent operator writes.
+func CheckTopologyLock(db *DB, holder string) error {
+	var currentHolder string
+	var acquiredAt time.Time
+	err := db.QueryRow(
+		"SELECT holder, acquired_at FROM desired_topology_lock WHERE singleton = 'X'",
+	).Scan(&currentHolder, &acquiredAt)
+	if err == sql.ErrNoRows {
+		return nil // no lock row yet — safe to write
+	}
+	if err != nil {
+		return fmt.Errorf("topology lock check: %w", err)
+	}
+	if currentHolder != holder && time.Since(acquiredAt) < topologyLockTTL {
+		return fmt.Errorf("desired topology locked by %q (%s ago); wait and retry",
+			currentHolder, time.Since(acquiredAt).Round(time.Second))
+	}
+	return nil
+}
+
+// TopologyLockUpsertSQL returns a SQL statement that claims the advisory
+// topology write lock for holder. Include this as the last statement in the
+// ExecTransaction stmts slice so the lock is updated atomically with the
+// desired-state writes.
+func TopologyLockUpsertSQL(holder string) string {
+	return fmt.Sprintf(
+		"INSERT INTO desired_topology_lock (singleton, holder, acquired_at)"+
+			" VALUES ('X', '%s', NOW())"+
+			" ON DUPLICATE KEY UPDATE holder = VALUES(holder), acquired_at = VALUES(acquired_at);",
+		escapeSQLIdentifier(holder),
+	)
 }

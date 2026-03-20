@@ -176,6 +176,11 @@ func (r *RigReconciler) syncToDolt(
 	rig *gasv1alpha1.Rig,
 	resolved resolvedRigDefaults,
 ) (string, error) {
+	// Pre-flight: ensure no CLI write is in progress (dgt-lc3).
+	if err := checkTopologyLock(ctx, dolt.db); err != nil {
+		return "", err
+	}
+
 	tx, err := dolt.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", fmt.Errorf("begin transaction: %w", err)
@@ -189,6 +194,11 @@ func (r *RigReconciler) syncToDolt(
 		{Table: "desired_formulas", Version: 1},
 		{Table: "desired_rig_custom_roles", Version: 1},
 	}); err != nil {
+		return "", err
+	}
+
+	// Claim advisory write lock (dgt-lc3).
+	if err := upsertTopologyLock(ctx, tx); err != nil {
 		return "", err
 	}
 
@@ -340,6 +350,11 @@ func (r *RigReconciler) handleDeletion(ctx context.Context, rig *gasv1alpha1.Rig
 
 // setRigDisabled writes desired_rigs SET enabled=false for the named rig.
 func (r *RigReconciler) setRigDisabled(ctx context.Context, dolt *doltClient, rigName string) error {
+	// Pre-flight: ensure no CLI write is in progress (dgt-lc3).
+	if err := checkTopologyLock(ctx, dolt.db); err != nil {
+		return err
+	}
+
 	tx, err := dolt.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -349,6 +364,11 @@ func (r *RigReconciler) setRigDisabled(ctx context.Context, dolt *doltClient, ri
 	if err := upsertTopologyVersions(ctx, tx, []tableVersion{
 		{Table: "desired_rigs", Version: 1},
 	}); err != nil {
+		return err
+	}
+
+	// Claim advisory write lock (dgt-lc3).
+	if err := upsertTopologyLock(ctx, tx); err != nil {
 		return err
 	}
 

@@ -154,6 +154,11 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 
 // applyTransaction builds and executes the full atomic Dolt transaction for m.
 func applyTransaction(db *DB, m *manifest.TownManifest, manifestPath string) error {
+	// Pre-flight: ensure no K8s operator write is in progress (dgt-lc3).
+	if err := CheckTopologyLock(db, BinaryVersion); err != nil {
+		return fmt.Errorf("apply: %w", err)
+	}
+
 	// Build the ordered statement list across all topology tables.
 	stmts := FullApplySQL(m)
 
@@ -164,11 +169,12 @@ func applyTransaction(db *DB, m *manifest.TownManifest, manifestPath string) err
 	commitMsg := fmt.Sprintf("town-ctl apply: %s v%s %s",
 		manifestPath, m.Version, addUpdateRemove)
 
-	// Prepend SET @dolt_transaction_commit_message to stmts.
+	// Prepend SET @dolt_transaction_commit_message and append lock upsert.
 	msgStmt := fmt.Sprintf(
 		"SET @dolt_transaction_commit_message = '%s';",
 		escapeSQLString(commitMsg))
 	allStmts := append([]string{msgStmt}, stmts...)
+	allStmts = append(allStmts, TopologyLockUpsertSQL(BinaryVersion))
 
 	return db.ExecTransaction(allStmts)
 }

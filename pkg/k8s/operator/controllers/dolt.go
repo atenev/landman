@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	// Register the MySQL driver used for Dolt's MySQL-compatible endpoint.
 	_ "github.com/go-sql-driver/mysql"
@@ -101,6 +102,57 @@ ON DUPLICATE KEY UPDATE schema_version = VALUES(schema_version), written_by = VA
 		if _, err := tx.ExecContext(ctx, query, v.Table, v.Version); err != nil {
 			return fmt.Errorf("upsert topology version for %q: %w", v.Table, err)
 		}
+	}
+	return nil
+}
+
+// topologyLockTTL is the window during which a lock held by a different
+// component is considered "live" and blocks writes.
+const topologyLockTTL = 30 * time.Second
+
+// topologyLockHolder is the written_by value the operator uses when
+// claiming the desired_topology_lock.
+const topologyLockHolder = "gastown-operator"
+
+// checkTopologyLock reads the desired_topology_lock sentinel row and returns
+// an error if a different component holds the lock within topologyLockTTL.
+// It is called as a pre-flight check outside the write transaction so the
+// reconciler can requeue immediately rather than entering a conflicting
+// transaction.
+func checkTopologyLock(ctx context.Context, db *sql.DB) error {
+	const query = `
+SELECT holder, acquired_at
+FROM desired_topology_lock
+WHERE singleton = 'X'
+LIMIT 1`
+
+	var holder string
+	var acquiredAt time.Time
+	err := db.QueryRowContext(ctx, query).Scan(&holder, &acquiredAt)
+	if err == sql.ErrNoRows {
+		return nil // no lock row yet — safe to write
+	}
+	if err != nil {
+		return fmt.Errorf("topology lock: read: %w", err)
+	}
+	if holder != topologyLockHolder && time.Since(acquiredAt) < topologyLockTTL {
+		return fmt.Errorf("desired topology locked by %q (%s ago); requeuing",
+			holder, time.Since(acquiredAt).Round(time.Second))
+	}
+	return nil
+}
+
+// upsertTopologyLock acquires (or renews) the advisory topology write lock
+// inside a transaction. Must be called after upsertTopologyVersions so the
+// lock update is committed atomically with the desired-state writes.
+func upsertTopologyLock(ctx context.Context, tx *sql.Tx) error {
+	const query = `
+INSERT INTO desired_topology_lock (singleton, holder, acquired_at)
+VALUES ('X', ?, NOW())
+ON DUPLICATE KEY UPDATE holder = VALUES(holder), acquired_at = VALUES(acquired_at)`
+
+	if _, err := tx.ExecContext(ctx, query, topologyLockHolder); err != nil {
+		return fmt.Errorf("upsert topology lock: %w", err)
 	}
 	return nil
 }

@@ -5,7 +5,7 @@
 -- use IF NOT EXISTS / ON DUPLICATE KEY UPDATE so the script is idempotent
 -- and safe to re-run on an already-initialised instance.
 --
--- Includes all tables from migrations 001–005. DOWN migration statements
+-- Includes all tables from migrations 001–007. DOWN migration statements
 -- are excluded intentionally; see the individual migration files for rollback.
 
 -- ============================================================================
@@ -218,6 +218,39 @@ CREATE TABLE IF NOT EXISTS actual_custom_roles (
 );
 
 -- ============================================================================
+-- desired_town  (migration 006)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS desired_town (
+    name          VARCHAR(128)  NOT NULL,
+    home          TEXT          NOT NULL,
+    mayor_model   VARCHAR(256)  NOT NULL DEFAULT 'claude-opus-4-6',
+    polecat_model VARCHAR(256)  NOT NULL DEFAULT 'claude-sonnet-4-6',
+    max_polecats  INT           NOT NULL DEFAULT 20,
+    updated_at    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (name)
+);
+
+-- ============================================================================
+-- actual_town  (migration 006)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS actual_town (
+    name               VARCHAR(128)  NOT NULL,
+    last_reconcile_at  TIMESTAMP     NULL,
+    PRIMARY KEY (name)
+);
+
+-- ============================================================================
+-- desired_topology_lock  (migration 007)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS desired_topology_lock (
+    singleton    CHAR(1)      NOT NULL DEFAULT 'X',
+    holder       VARCHAR(128) NOT NULL,
+    acquired_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY  (singleton),
+    CONSTRAINT chk_singleton CHECK (singleton = 'X')
+);
+
+-- ============================================================================
 -- Seed desired_topology_versions (idempotent)
 -- ============================================================================
 INSERT INTO desired_topology_versions (table_name, schema_version, written_by)
@@ -227,7 +260,8 @@ VALUES
     ('desired_formulas',         1, 'gastown-operator/init'),
     ('desired_custom_roles',     1, 'gastown-operator/init'),
     ('desired_rig_custom_roles', 1, 'gastown-operator/init'),
-    ('desired_cost_policy',      1, 'gastown-operator/init')
+    ('desired_cost_policy',      1, 'gastown-operator/init'),
+    ('desired_town',             1, 'gastown-operator/init')
 ON DUPLICATE KEY UPDATE
     schema_version = VALUES(schema_version),
     written_by     = VALUES(written_by),
@@ -241,7 +275,8 @@ VALUES
     ('actual_rigs',          1, 'gastown-operator/init'),
     ('actual_agent_config',  1, 'gastown-operator/init'),
     ('actual_worktrees',     1, 'gastown-operator/init'),
-    ('actual_custom_roles',  1, 'gastown-operator/init')
+    ('actual_custom_roles',  1, 'gastown-operator/init'),
+    ('actual_town',          1, 'gastown-operator/init')
 ON DUPLICATE KEY UPDATE
     schema_version = VALUES(schema_version),
     written_by     = VALUES(written_by),
