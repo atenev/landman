@@ -704,7 +704,6 @@ func (r *DoltInstanceReconciler) setCondition(
 		Type:               condType,
 		Status:             status,
 		ObservedGeneration: di.Generation,
-		LastTransitionTime: metav1.Now(),
 		Reason:             reason,
 		Message:            message,
 	})

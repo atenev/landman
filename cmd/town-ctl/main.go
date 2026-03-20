@@ -385,40 +385,6 @@ func applyWrite(m *manifest.TownManifest, dsn string) error {
 		return fmt.Errorf("ping dolt: %w", err)
 	}
 
-	// Check for no-op: read current rows and diff.
-	currentCost, err := readCurrentCostPolicy(ctx, db)
-	if err != nil {
-		return fmt.Errorf("read desired_cost_policy: %w", err)
-	}
-	currentRoles, err := readCurrentCustomRoles(ctx, db)
-	if err != nil {
-		return fmt.Errorf("read desired_custom_roles: %w", err)
-	}
-	currentRigRoles, err := readCurrentRigCustomRoles(ctx, db)
-	if err != nil {
-		return fmt.Errorf("read desired_rig_custom_roles: %w", err)
-	}
-
-	costPlan := townctl.DryRunPlan(m, currentCost)
-	roleDiff := townctl.DiffCustomRoles(m, currentRoles, currentRigRoles)
-
-	// Topology tables (rigs/agents/formulas) always need a re-sync; we treat
-	// them as non-idempotent for simplicity (upserts are idempotent by design).
-	// If cost and roles also have no changes, we still write topology to keep
-	// the versions table up to date. A true no-op check would require reading
-	// all topology tables, which is deferred to a future optimisation.
-	hasChanges := len(costPlan) > 0 || !roleDiff.IsEmpty()
-
-	if !hasChanges {
-		// Check whether topology tables need changes (simplified: check rig count).
-		var rigCount int
-		row := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM desired_rigs")
-		if err := row.Scan(&rigCount); err == nil && rigCount == len(m.Rigs) {
-			fmt.Println("town-ctl: no changes detected, skipping Dolt write")
-			return launchAgents(m)
-		}
-	}
-
 	// Build the full ordered statement list.
 	var allStmts []string
 	allStmts = append(allStmts, townctl.TopologyApplySQL(m)...)

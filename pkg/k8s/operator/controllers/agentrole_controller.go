@@ -413,7 +413,6 @@ func (r *AgentRoleReconciler) setCondition(
 		Type:               condType,
 		Status:             status,
 		ObservedGeneration: ar.Generation,
-		LastTransitionTime: metav1.Now(),
 		Reason:             reason,
 		Message:            message,
 	})

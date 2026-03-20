@@ -431,7 +431,6 @@ func (r *GasTownReconciler) setCondition(
 		Type:               condType,
 		Status:             status,
 		ObservedGeneration: gt.Generation,
-		LastTransitionTime: metav1.Now(),
 		Reason:             reason,
 		Message:            message,
 	})

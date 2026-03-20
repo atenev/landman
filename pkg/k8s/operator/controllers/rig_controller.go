@@ -538,7 +538,6 @@ func (r *RigReconciler) setCondition(
 		Type:               condType,
 		Status:             status,
 		ObservedGeneration: rig.Generation,
-		LastTransitionTime: metav1.Now(),
 		Reason:             reason,
 		Message:            message,
 	})
