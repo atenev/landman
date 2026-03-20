@@ -181,9 +181,18 @@ type RoleSpec struct {
 type RoleIdentity struct {
 	// ClaudeMD is the path to this role's CLAUDE.md file.
 	// Path interpolation applies. Must resolve at apply time (ADR-0004, Decision 2).
+	// When Extends is set, ClaudeMD provides the override layer that is appended
+	// after the base role's CLAUDE.md content (ADR-0005).
 	ClaudeMD string `toml:"claude_md" json:"claude_md" validate:"required"`
+	// Extends is the name of another custom [[role]] whose CLAUDE.md content is
+	// prepended before this role's ClaudeMD content (ADR-0005). The merge is
+	// performed at apply time; the merged file is written to
+	// ${GT_HOME}/roles/merged/<name>.md and stored as claude_md_path in Dolt.
+	// Optional. Only custom role names are valid — built-in roles are excluded
+	// because their CLAUDE.md paths are not declared in the manifest.
+	Extends string `toml:"extends" json:"extends,omitempty"`
 	// Model overrides the Claude model for this role. Inherits from rig defaults if empty.
-	Model    string `toml:"model"     json:"model,omitempty"`
+	Model string `toml:"model" json:"model,omitempty"`
 }
 
 // RoleTrigger defines when a custom role agent is spawned.

@@ -31,11 +31,18 @@ type CustomRoleRow struct {
 	TriggerType     string // "bead_assigned", "schedule", "event", "manual"
 	TriggerSchedule string // non-empty when TriggerType="schedule"
 	TriggerEvent    string // non-empty when TriggerType="event"
-	ClaudeMDPath    string
-	Model           string // empty → inherit from rig defaults
-	ParentRole      string
-	ReportsTo       string // empty → same as ParentRole
-	MaxInstances    int    // 0 → use DB default of 1
+	// ClaudeMDPath is the path stored in Dolt. When the role declares extends,
+	// this is the path to the apply-time merged file (ADR-0005), not the
+	// role's own claude_md path.
+	ClaudeMDPath string
+	Model        string // empty → inherit from rig defaults
+	ParentRole   string
+	ReportsTo    string // empty → same as ParentRole
+	MaxInstances int    // 0 → use DB default of 1
+	// ExtendsRole is the name of the custom role this role extends (ADR-0005).
+	// Empty when no extends is declared. Stored for auditability; the Surveyor
+	// uses ClaudeMDPath directly and does not need to re-merge.
+	ExtendsRole string
 }
 
 // RigCustomRoleRow represents one row in the desired_rig_custom_roles junction table.
@@ -91,6 +98,7 @@ func roleSpecToRow(r manifest.RoleSpec) CustomRoleRow {
 		ParentRole:      r.Supervision.Parent,
 		ReportsTo:       r.Supervision.ReportsTo,
 		MaxInstances:    maxInstances,
+		ExtendsRole:     r.Identity.Extends,
 	}
 }
 
@@ -227,12 +235,13 @@ func upsertCustomRoleRow(r CustomRoleRow) string {
 	triggerSchedule := nullOrQuoted(r.TriggerSchedule)
 	triggerEvent := nullOrQuoted(r.TriggerEvent)
 	reportsTo := nullOrQuoted(r.ReportsTo)
+	extendsRole := nullOrQuoted(r.ExtendsRole)
 
 	return fmt.Sprintf(
 		"INSERT INTO desired_custom_roles"+
 			" (name, description, scope, lifespan, trigger_type, trigger_schedule,"+
-			" trigger_event, claude_md_path, model, parent_role, reports_to, max_instances)"+
-			" VALUES ('%s', '%s', '%s', '%s', '%s', %s, %s, '%s', %s, '%s', %s, %d)"+
+			" trigger_event, claude_md_path, model, parent_role, reports_to, max_instances, extends_role)"+
+			" VALUES ('%s', '%s', '%s', '%s', '%s', %s, %s, '%s', %s, '%s', %s, %d, %s)"+
 			" ON DUPLICATE KEY UPDATE"+
 			" description = VALUES(description), scope = VALUES(scope),"+
 			" lifespan = VALUES(lifespan), trigger_type = VALUES(trigger_type),"+
@@ -240,7 +249,7 @@ func upsertCustomRoleRow(r CustomRoleRow) string {
 			" trigger_event = VALUES(trigger_event),"+
 			" claude_md_path = VALUES(claude_md_path), model = VALUES(model),"+
 			" parent_role = VALUES(parent_role), reports_to = VALUES(reports_to),"+
-			" max_instances = VALUES(max_instances);",
+			" max_instances = VALUES(max_instances), extends_role = VALUES(extends_role);",
 		escapeSQLString(r.Name),
 		escapeSQLString(r.Description),
 		escapeSQLString(r.Scope),
@@ -253,6 +262,7 @@ func upsertCustomRoleRow(r CustomRoleRow) string {
 		escapeSQLString(r.ParentRole),
 		reportsTo,
 		r.MaxInstances,
+		extendsRole,
 	)
 }
 

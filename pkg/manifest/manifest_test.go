@@ -1234,3 +1234,197 @@ branch = "main"
 		t.Fatalf("expected 1 warning for anonymous [[rig.role]] slot, got %d: %v", len(warnings), warnings)
 	}
 }
+
+// --- CLAUDE.md template inheritance tests (ADR-0005, dgt-90x) ---
+
+func TestParse_Role_Extends_Valid(t *testing.T) {
+	good := roleBase + `
+[[role]]
+name  = "base-reviewer"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/base-reviewer/CLAUDE.md"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+
+[[role]]
+name  = "senior-reviewer"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/senior-reviewer/CLAUDE.md"
+  extends   = "base-reviewer"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+`
+	m, err := manifest.Parse([]byte(good))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Roles) != 2 {
+		t.Fatalf("expected 2 roles, got %d", len(m.Roles))
+	}
+	sr := m.Roles[1]
+	if sr.Identity.Extends != "base-reviewer" {
+		t.Errorf("identity.extends = %q, want %q", sr.Identity.Extends, "base-reviewer")
+	}
+}
+
+func TestParse_Role_Extends_UnknownRole(t *testing.T) {
+	bad := roleBase + `
+[[role]]
+name  = "my-role"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/my-role/CLAUDE.md"
+  extends   = "nonexistent"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for extends referencing unknown role, got nil")
+	}
+}
+
+func TestParse_Role_Extends_BuiltinRejected(t *testing.T) {
+	bad := roleBase + `
+[[role]]
+name  = "my-role"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/my-role/CLAUDE.md"
+  extends   = "polecat"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for extends referencing built-in role, got nil")
+	}
+}
+
+func TestParse_Role_Extends_SelfReference(t *testing.T) {
+	bad := roleBase + `
+[[role]]
+name  = "my-role"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/my-role/CLAUDE.md"
+  extends   = "my-role"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for self-referencing extends, got nil")
+	}
+}
+
+func TestParse_Role_Extends_CycleDetected(t *testing.T) {
+	bad := roleBase + `
+[[role]]
+name  = "role-a"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/role-a/CLAUDE.md"
+  extends   = "role-b"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+
+[[role]]
+name  = "role-b"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/opt/gt/roles/role-b/CLAUDE.md"
+  extends   = "role-a"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+`
+	if _, err := manifest.Parse([]byte(bad)); err == nil {
+		t.Fatal("expected error for circular extends chain, got nil")
+	}
+}
+
+func TestValidateApplyTimeFS_Extends_BasePathChecked(t *testing.T) {
+	good := roleBase + `
+[[role]]
+name  = "base"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/roles/base/CLAUDE.md"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+
+[[role]]
+name  = "derived"
+scope = "rig"
+
+  [role.identity]
+  claude_md = "/roles/derived/CLAUDE.md"
+  extends   = "base"
+
+  [role.trigger]
+  type = "bead_assigned"
+
+  [role.supervision]
+  parent = "witness"
+`
+	m, err := manifest.Parse([]byte(good))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	// stat that only knows about the derived path — base is missing.
+	statMissingBase := func(path string) error {
+		if path == "/roles/derived/CLAUDE.md" {
+			return nil
+		}
+		return fmt.Errorf("not found: %s", path)
+	}
+	if err := manifest.ValidateApplyTimeFS(m, statMissingBase); err == nil {
+		t.Fatal("expected error when base role claude_md is missing, got nil")
+	}
+
+	// stat that knows about both paths.
+	statBoth := func(path string) error { return nil }
+	if err := manifest.ValidateApplyTimeFS(m, statBoth); err != nil {
+		t.Fatalf("unexpected error when both paths exist: %v", err)
+	}
+}

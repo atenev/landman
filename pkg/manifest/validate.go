@@ -143,6 +143,14 @@ func crossValidate(m *TownManifest) error {
 		allKnownRoles[name] = struct{}{}
 	}
 
+	// Build extends map for cycle detection: name → extends-target (custom only).
+	extendsTarget := make(map[string]string, len(m.Roles))
+	for _, role := range m.Roles {
+		if role.Identity.Extends != "" {
+			extendsTarget[role.Name] = role.Identity.Extends
+		}
+	}
+
 	// Pass 2: per-role cross-field checks that require the complete role set.
 	for _, role := range m.Roles {
 		// Trigger cross-field rules.
@@ -167,6 +175,28 @@ func crossValidate(m *TownManifest) error {
 				return fmt.Errorf("[role.%s.supervision.reports_to] unknown role: %q", role.Name, role.Supervision.ReportsTo)
 			}
 		}
+
+		// extends validation (ADR-0005).
+		if role.Identity.Extends != "" {
+			// extends must reference a custom role (not a built-in).
+			if _, builtin := builtinRoles[role.Identity.Extends]; builtin {
+				return fmt.Errorf("[role.%s.identity.extends] %q is a built-in role; extends only supports custom roles",
+					role.Name, role.Identity.Extends)
+			}
+			// extends must reference a defined custom role.
+			if _, defined := roleNames[role.Identity.Extends]; !defined {
+				return fmt.Errorf("[role.%s.identity.extends] unknown custom role: %q",
+					role.Name, role.Identity.Extends)
+			}
+			// Self-reference is a cycle.
+			if role.Identity.Extends == role.Name {
+				return fmt.Errorf("[role.%s.identity.extends] role cannot extend itself", role.Name)
+			}
+			// Walk the extends chain to detect cycles (max depth = len(m.Roles)).
+			if err := detectExtendsCycle(role.Name, extendsTarget, len(m.Roles)); err != nil {
+				return err
+			}
+		}
 	}
 
 	// --- Rig role reference checks ---
@@ -185,6 +215,30 @@ func crossValidate(m *TownManifest) error {
 	return nil
 }
 
+// detectExtendsCycle walks the extends chain starting from origin and returns
+// an error if a cycle is detected. maxDepth is the maximum number of hops
+// before a cycle is assumed (set to len(m.Roles)).
+func detectExtendsCycle(origin string, extendsTarget map[string]string, maxDepth int) error {
+	visited := make(map[string]struct{}, maxDepth)
+	cur := origin
+	for i := 0; i <= maxDepth; i++ {
+		next, ok := extendsTarget[cur]
+		if !ok {
+			return nil // chain terminates cleanly
+		}
+		if next == origin {
+			return fmt.Errorf("[role.%s.identity.extends] circular extends chain detected", origin)
+		}
+		if _, seen := visited[next]; seen {
+			return fmt.Errorf("[role.%s.identity.extends] circular extends chain detected", origin)
+		}
+		visited[next] = struct{}{}
+		cur = next
+	}
+	// Should not reach here with valid input, but guard anyway.
+	return fmt.Errorf("[role.%s.identity.extends] extends chain exceeds maximum depth", origin)
+}
+
 // ValidateApplyTime runs filesystem checks that must succeed before any Dolt
 // write. It expands ${VAR} references in claude_md paths using os.ExpandEnv.
 // For testing, use ValidateApplyTimeFS with a stub stat function.
@@ -198,6 +252,9 @@ func ValidateApplyTime(m *TownManifest) error {
 // ValidateApplyTimeFS is the testable variant of ValidateApplyTime.
 // The stat argument is called for each resolved claude_md path; return a
 // non-nil error to signal that the path does not exist.
+//
+// When a role declares extends, the base role's claude_md path is also checked
+// because it is read at apply time to produce the merged output file.
 func ValidateApplyTimeFS(m *TownManifest, stat func(string) error) error {
 	// Check Surveyor CLAUDE.md when explicitly configured.
 	if p := m.Town.Agents.SurveyorClaudeMD; p != "" {
@@ -207,10 +264,27 @@ func ValidateApplyTimeFS(m *TownManifest, stat func(string) error) error {
 		}
 	}
 
+	// Build a lookup from role name → resolved claude_md path for extends checks.
+	claudeMDByName := make(map[string]string, len(m.Roles))
+	for _, role := range m.Roles {
+		claudeMDByName[role.Name] = os.ExpandEnv(role.Identity.ClaudeMD)
+	}
+
 	for _, role := range m.Roles {
 		path := os.ExpandEnv(role.Identity.ClaudeMD)
 		if err := stat(path); err != nil {
 			return fmt.Errorf("[role.%s.identity.claude_md] path not found: %s", role.Name, path)
+		}
+		// When extends is set, the base role's claude_md must also exist because
+		// apply-time merge reads it to produce the merged file (ADR-0005).
+		if role.Identity.Extends != "" {
+			basePath, ok := claudeMDByName[role.Identity.Extends]
+			if ok && basePath != "" {
+				if err := stat(basePath); err != nil {
+					return fmt.Errorf("[role.%s.identity.extends] base role %q claude_md path not found: %s",
+						role.Name, role.Identity.Extends, basePath)
+				}
+			}
 		}
 	}
 	return nil
