@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS desired_agent_config (
     role           VARCHAR(64)   NOT NULL,
     enabled        BOOLEAN       NOT NULL DEFAULT TRUE,
     model          VARCHAR(256),
-    max_count      INT,
+    max_polecats   INT,
     claude_md_path TEXT,
     PRIMARY KEY (rig_name, role),
     CONSTRAINT fk_agent_config_rig
