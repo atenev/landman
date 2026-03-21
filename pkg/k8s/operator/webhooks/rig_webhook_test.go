@@ -69,6 +69,155 @@ func makeGasTown(name string) *gasv1alpha1.GasTown {
 	}
 }
 
+// ── RigDefaulter helpers ────────────────────────────────────────────────────
+
+func newRigDefaulter(t *testing.T, gastowns ...*gasv1alpha1.GasTown) *webhooks.RigDefaulter {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := gasv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	cb := fake.NewClientBuilder().WithScheme(scheme)
+	for _, gt := range gastowns {
+		cb = cb.WithObjects(gt)
+	}
+	d := &webhooks.RigDefaulter{Client: cb.Build()}
+	dec := admission.NewDecoder(scheme)
+	if err := d.InjectDecoder(dec); err != nil {
+		t.Fatalf("InjectDecoder: %v", err)
+	}
+	return d
+}
+
+func makeGasTownWithDefaults(name, mayorModel, polecatModel string, maxPolecats int32) *gasv1alpha1.GasTown {
+	gt := makeGasTown(name)
+	gt.Spec.Defaults = gasv1alpha1.GasTownDefaults{
+		MayorModel:   mayorModel,
+		PolecatModel: polecatModel,
+		MaxPolecats:  maxPolecats,
+	}
+	return gt
+}
+
+func rigWithAgents(name, townRef, mayorModel, polecatModel string, maxPolecats int32) *gasv1alpha1.Rig {
+	r := makeRig(name, townRef)
+	r.Spec.Agents.MayorModel = mayorModel
+	r.Spec.Agents.PolecatModel = polecatModel
+	r.Spec.Agents.MaxPolecats = maxPolecats
+	return r
+}
+
+// ── RigDefaulter tests ──────────────────────────────────────────────────────
+
+// TestRigDefaulter_AllFieldsMissing_AllDefaultsApplied verifies that when all
+// three agent fields are empty, the defaulter emits patches for each.
+func TestRigDefaulter_AllFieldsMissing_AllDefaultsApplied(t *testing.T) {
+	gt := makeGasTownWithDefaults("town", "claude-opus-4-6", "claude-sonnet-4-6", 20)
+	d := newRigDefaulter(t, gt)
+
+	rig := makeRig("r", "town")
+	resp := d.Handle(context.Background(), admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+			Object:    encodeRig(t, rig),
+		},
+	})
+	if !resp.Allowed {
+		t.Fatalf("expected Allowed, got result: %+v", resp.Result)
+	}
+	if len(resp.Patches) == 0 {
+		t.Fatal("expected patches for all defaults, got none")
+	}
+}
+
+// TestRigDefaulter_MayorModelMissing_OnlyMayorDefaultApplied verifies that
+// when only mayorModel is empty, exactly that field is patched.
+func TestRigDefaulter_MayorModelMissing_OnlyMayorDefaultApplied(t *testing.T) {
+	gt := makeGasTownWithDefaults("town", "claude-opus-4-6", "claude-sonnet-4-6", 20)
+	d := newRigDefaulter(t, gt)
+
+	rig := rigWithAgents("r", "town", "", "claude-sonnet-4-6", 10)
+	resp := d.Handle(context.Background(), admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+			Object:    encodeRig(t, rig),
+		},
+	})
+	if !resp.Allowed {
+		t.Fatalf("expected Allowed, got result: %+v", resp.Result)
+	}
+	if len(resp.Patches) == 0 {
+		t.Fatal("expected at least one patch for mayorModel default")
+	}
+}
+
+// TestRigDefaulter_MaxPolecatsMissing_DefaultApplied verifies the maxPolecats
+// mutation (Mutation 3) when mayorModel and polecatModel are already set.
+func TestRigDefaulter_MaxPolecatsMissing_DefaultApplied(t *testing.T) {
+	gt := makeGasTownWithDefaults("town", "claude-opus-4-6", "claude-sonnet-4-6", 30)
+	d := newRigDefaulter(t, gt)
+
+	rig := rigWithAgents("r", "town", "my-mayor-model", "my-polecat-model", 0)
+	resp := d.Handle(context.Background(), admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+			Object:    encodeRig(t, rig),
+		},
+	})
+	if !resp.Allowed {
+		t.Fatalf("expected Allowed, got result: %+v", resp.Result)
+	}
+	if len(resp.Patches) == 0 {
+		t.Fatal("expected patch for maxPolecats default")
+	}
+}
+
+// TestRigDefaulter_AllFieldsSet_NoPatchEmitted verifies the early-exit path
+// (rig_webhook.go:114-118): when all three fields are already set no patch is
+// emitted, avoiding unnecessary admission review mutations.
+func TestRigDefaulter_AllFieldsSet_NoPatchEmitted(t *testing.T) {
+	gt := makeGasTownWithDefaults("town", "claude-opus-4-6", "claude-sonnet-4-6", 20)
+	d := newRigDefaulter(t, gt)
+
+	rig := rigWithAgents("r", "town", "custom-mayor", "custom-polecat", 5)
+	resp := d.Handle(context.Background(), admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+			Object:    encodeRig(t, rig),
+		},
+	})
+	if !resp.Allowed {
+		t.Fatalf("expected Allowed, got result: %+v", resp.Result)
+	}
+	if len(resp.Patches) > 0 {
+		t.Errorf("expected no patches when all fields already set, got: %v", resp.Patches)
+	}
+}
+
+// TestRigDefaulter_GasTownNotFound_AllowedNoPatch verifies the
+// GasTown-not-found path (rig_webhook.go:123-129): the defaulter allows the
+// request without patching so the validating webhook can deny it with a clear
+// error message.
+func TestRigDefaulter_GasTownNotFound_AllowedNoPatch(t *testing.T) {
+	d := newRigDefaulter(t) // empty fake client — no GasTown objects
+
+	rig := makeRig("r", "missing-town")
+	resp := d.Handle(context.Background(), admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Create,
+			Object:    encodeRig(t, rig),
+		},
+	})
+	if !resp.Allowed {
+		t.Fatalf("expected Allowed when GasTown not found (validator will deny separately), got: %+v", resp.Result)
+	}
+	if len(resp.Patches) > 0 {
+		t.Errorf("expected no patches when GasTown not found, got: %v", resp.Patches)
+	}
+}
+
+// ── RigValidator tests ──────────────────────────────────────────────────────
+
 func TestRigValidator_TownRefImmutable(t *testing.T) {
 	gt := makeGasTown("town-a")
 	gt2 := makeGasTown("town-b")
