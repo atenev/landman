@@ -68,3 +68,37 @@ securityContext:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# dgt-observer: polling binary that exposes Prometheus metrics from Dolt.
+# Set enabled=true when deploying alongside the operator.
+observer:
+  enabled: true
+  image:
+    repository: ghcr.io/tenev/gastown-observer
+    tag: ""  # Defaults to Chart.appVersion when empty
+  serviceMonitor:
+    # Set true when Prometheus Operator is installed (kube-prometheus-stack).
+    enabled: false
+
+# PrometheusRule CRD for AlertManager alert rules.
+# Set enabled=true when Prometheus Operator is installed (kube-prometheus-stack).
+prometheusRule:
+  enabled: false
+
+  # Tunable thresholds — override these per environment.
+  thresholds:
+    # Fleet convergence score below this triggers GasTownConvergenceDegraded.
+    convergenceWarning: 0.9
+
+    # Seconds since mayor last_seen before GasTownMayorStale fires.
+    # Default is 2× StaleTTL (60s default StaleTTL × 2 = 120s).
+    mayorStalenessSeconds: 120
+
+    # Seconds without a Surveyor reconcile pass before GasTownSurveyorSilent fires.
+    surveyorSilenceSeconds: 300
+
+    # Open P1 task Beads count before GasTownBeadsBacklog fires.
+    beadsBacklogCount: 10
+
+    # Budget % used before GasTownBudgetCritical fires.
+    budgetCriticalPct: 90

@@ -1,0 +1,17 @@
+{{- if and .Values.observer.enabled .Values.observer.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "gastown-operator.fullname" . }}-observer
+  labels:
+    {{- include "gastown-operator.labels" . | nindent 4 }}
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app: dgt-observer
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+{{- end }}
