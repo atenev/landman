@@ -170,10 +170,10 @@ home = "/opt/gt"
 }
 
 func TestBuildSurveyorEnv_InjectsFileSourcedKey(t *testing.T) {
-	// Ensure the env var is not set in the test environment.
+	// Ensure the env vars are not set in the test environment.
+	// t.Setenv registers cleanup to restore the original value after the test.
 	t.Setenv("ANTHROPIC_API_KEY", "")
-	os.Unsetenv("ANTHROPIC_API_KEY")
-	os.Unsetenv("GITHUB_TOKEN")
+	t.Setenv("GITHUB_TOKEN", "")
 
 	env := townctl.BuildSurveyorEnv("sk-from-file", "gh-from-file")
 

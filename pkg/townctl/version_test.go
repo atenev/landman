@@ -63,8 +63,8 @@ func TestTopologyVersionsUpsert_UsesSchemaVersion(t *testing.T) {
 
 func TestTopologyVersionsUpsert_UsesBinaryVersion(t *testing.T) {
 	original := townctl.BinaryVersion
+	t.Cleanup(func() { townctl.BinaryVersion = original })
 	townctl.BinaryVersion = "town-ctl/1.2.3"
-	defer func() { townctl.BinaryVersion = original }()
 
 	stmt := townctl.TopologyVersionsUpsert([]townctl.TableSchemaVersion{
 		{Table: "desired_rigs", Version: 1},

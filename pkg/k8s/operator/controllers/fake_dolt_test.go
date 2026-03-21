@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -35,15 +36,9 @@ func (d *fakeDoltDriver) Open(_ string) (driver.Conn, error) {
 	return &fakeDoltConn{}, nil
 }
 
-type fakeDoltConn struct {
-	mu      sync.Mutex
-	queries []string
-}
+type fakeDoltConn struct{}
 
 func (c *fakeDoltConn) Prepare(query string) (driver.Stmt, error) {
-	c.mu.Lock()
-	c.queries = append(c.queries, query)
-	c.mu.Unlock()
 	return &fakeDoltStmt{query: query}, nil
 }
 
@@ -64,10 +59,45 @@ func (s *fakeDoltStmt) Query(_ []driver.Value) (driver.Rows, error) {
 	// SELECT dolt_hashof('HEAD') → return one row so reconcilers record a commit hash.
 	// All other SELECT queries return an empty result set (sql.ErrNoRows path),
 	// which the reconcilers treat as "not yet seen" — safe for test isolation.
+	cols := parseSelectColumns(s.query)
 	if strContains(s.query, "dolt_hashof") {
-		return &fakeDoltRows{values: []string{"abc123def456"}, pos: 0}, nil
+		return &fakeDoltRows{cols: cols, values: []string{"abc123def456"}}, nil
 	}
-	return &fakeDoltRows{values: nil, pos: 0}, nil
+	return &fakeDoltRows{cols: cols}, nil
+}
+
+// parseSelectColumns extracts column names from a SQL SELECT statement.
+// It is used only in tests to provide accurate Columns() metadata for the
+// fake SQL driver without executing real SQL.
+func parseSelectColumns(query string) []string {
+	q := strings.ToUpper(query)
+	sel := strings.Index(q, "SELECT ")
+	if sel == -1 {
+		return []string{"col"}
+	}
+	start := sel + 7
+	end := strings.Index(q[start:], " FROM ")
+	var part string
+	if end == -1 {
+		part = strings.TrimSpace(query[start:])
+	} else {
+		part = strings.TrimSpace(query[start : start+end])
+	}
+	parts := strings.Split(part, ",")
+	cols := make([]string, 0, len(parts))
+	for _, c := range parts {
+		c = strings.TrimSpace(c)
+		if i := strings.LastIndex(strings.ToUpper(c), " AS "); i != -1 {
+			c = strings.TrimSpace(c[i+4:])
+		}
+		if c != "" {
+			cols = append(cols, c)
+		}
+	}
+	if len(cols) == 0 {
+		return []string{"col"}
+	}
+	return cols
 }
 
 // strContains is a simple substring search used only in tests.
@@ -86,11 +116,17 @@ func (r fakeDoltResult) LastInsertId() (int64, error) { return 0, nil }
 func (r fakeDoltResult) RowsAffected() (int64, error) { return 1, nil }
 
 type fakeDoltRows struct {
+	cols   []string
 	values []string
 	pos    int
 }
 
-func (r *fakeDoltRows) Columns() []string { return []string{"val"} }
+func (r *fakeDoltRows) Columns() []string {
+	if len(r.cols) == 0 {
+		return []string{"col"}
+	}
+	return r.cols
+}
 func (r *fakeDoltRows) Close() error      { return nil }
 func (r *fakeDoltRows) Next(dest []driver.Value) error {
 	if r.pos >= len(r.values) {

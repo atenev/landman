@@ -243,6 +243,15 @@ func TestApplyDryRun_RigOptIn_PrintsJunctionAdd(t *testing.T) {
 // one rig opt-in, then verifies that all three tables contain the expected rows.
 func TestDoltInteg_FullApply_CustomRoles(t *testing.T) {
 	db := doltIntegSkip(t)
+	t.Cleanup(func() {
+		// Remove rows inserted by this test to avoid order-sensitive failures.
+		_, _ = db.Exec("DELETE FROM desired_rig_custom_roles WHERE rig_name = 'backend' AND role_name = 'reviewer'")
+		_, _ = db.Exec("DELETE FROM desired_custom_roles WHERE name = 'reviewer'")
+		_, _ = db.Exec("DELETE FROM desired_agent_config WHERE rig_name = 'backend'")
+		_, _ = db.Exec("DELETE FROM desired_rigs WHERE name = 'backend'")
+		_, _ = db.Exec("DELETE FROM desired_topology_versions WHERE written_by = ?", townctl.BinaryVersion)
+		_, _ = db.Exec("DELETE FROM desired_topology_lock WHERE singleton = 'X'")
+	})
 	dir := t.TempDir()
 	claudePath := filepath.Join(dir, "CLAUDE.md")
 	if err := os.WriteFile(claudePath, []byte("# Reviewer"), 0o644); err != nil {
@@ -292,6 +301,15 @@ func TestDoltInteg_FullApply_CustomRoles(t *testing.T) {
 // verifies that the second apply produces no new Dolt commit (no diff).
 func TestDoltInteg_Idempotent_CustomRoles(t *testing.T) {
 	db := doltIntegSkip(t)
+	t.Cleanup(func() {
+		// Remove rows inserted by this test to avoid order-sensitive failures.
+		_, _ = db.Exec("DELETE FROM desired_rig_custom_roles WHERE rig_name = 'backend' AND role_name = 'reviewer'")
+		_, _ = db.Exec("DELETE FROM desired_custom_roles WHERE name = 'reviewer'")
+		_, _ = db.Exec("DELETE FROM desired_agent_config WHERE rig_name = 'backend'")
+		_, _ = db.Exec("DELETE FROM desired_rigs WHERE name = 'backend'")
+		_, _ = db.Exec("DELETE FROM desired_topology_versions WHERE written_by = ?", townctl.BinaryVersion)
+		_, _ = db.Exec("DELETE FROM desired_topology_lock WHERE singleton = 'X'")
+	})
 	dir := t.TempDir()
 	claudePath := filepath.Join(dir, "CLAUDE.md")
 	if err := os.WriteFile(claudePath, []byte("# Reviewer"), 0o644); err != nil {
