@@ -63,6 +63,7 @@ func TestDoltInstanceValidator(t *testing.T) {
 		replicas  int32
 		wantAllow bool
 	}{
+		{"replicas=0 denied", 0, false},
 		{"replicas=1 allowed", 1, true},
 		{"replicas=2 denied", 2, false},
 		{"replicas=3 denied", 3, false},

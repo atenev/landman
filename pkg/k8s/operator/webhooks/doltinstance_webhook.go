@@ -50,9 +50,9 @@ func (v *DoltInstanceValidator) Handle(_ context.Context, req admission.Request)
 	}
 
 	// Rule 8: replicas must be 1 (MVP constraint, ADR-0005 D4).
-	if di.Spec.Replicas > 1 {
+	if di.Spec.Replicas != 1 {
 		return admission.Denied(fmt.Sprintf(
-			"spec.replicas: Invalid value: %d: replicas > 1 not supported in "+
+			"spec.replicas: Invalid value: %d: replicas must be 1 in "+
 				"gastown-operator v0.x", di.Spec.Replicas))
 	}
 

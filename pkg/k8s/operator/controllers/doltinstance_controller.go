@@ -258,6 +258,9 @@ func (r *DoltInstanceReconciler) reconcileStatefulSet(
 
 	// Update only mutable fields; VolumeClaimTemplates are immutable.
 	patch := client.MergeFrom(existing.DeepCopy())
+	if len(existing.Spec.Template.Spec.Containers) == 0 {
+		return fmt.Errorf("statefulset %s/%s has no containers", existing.Namespace, existing.Name)
+	}
 	existing.Spec.Template.Spec.Containers[0].Image = image
 	existing.Spec.Replicas = &replicas
 	if err := r.Patch(ctx, &existing, patch); err != nil {
@@ -693,6 +696,9 @@ func (r *DoltInstanceReconciler) updateStatefulSetImage(
 		return fmt.Errorf("get statefulset for image update: %w", err)
 	}
 	patch := client.MergeFrom(sts.DeepCopy())
+	if len(sts.Spec.Template.Spec.Containers) == 0 {
+		return fmt.Errorf("statefulset %s/%s has no containers", sts.Namespace, sts.Name)
+	}
 	sts.Spec.Template.Spec.Containers[0].Image = fmt.Sprintf("%s:%s", doltBaseImage, version)
 	if err := r.Patch(ctx, &sts, patch); err != nil {
 		return fmt.Errorf("patch statefulset image to %s: %w", version, err)
