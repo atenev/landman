@@ -7,6 +7,7 @@
 //	               [--dolt-dsn DSN]
 //	town-ctl status [--dolt-dsn DSN] [--output text|json] [--rig NAME]
 //	                [--no-color]
+//	town-ctl lock clear [--dolt-dsn DSN]
 //	town-ctl version
 //
 // The apply command:
@@ -19,18 +20,26 @@
 //  7. Without --dry-run: writes an atomic Dolt transaction; idempotent on no-op.
 //  8. Checks [town.agents].surveyor and launches/verifies the process.
 //
+// The lock command:
+//
+//	lock clear — force-expire the desired_topology_lock advisory lock.
+//	             Use when a writer crashed mid-write and the 30 s TTL
+//	             has not yet elapsed. See operator runbook for caveats.
+//
 // Exit codes: 0 = success, 1 = error (human-readable message on stderr).
 // For status: 0 = fully converged, 1 = error, 2 = not fully converged.
 package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	// Register the MySQL driver used for Dolt's MySQL-compatible endpoint.
 	_ "github.com/go-sql-driver/mysql"
@@ -58,11 +67,13 @@ func run(args []string) int {
 		return 0
 	case "status":
 		return statusCmd(args[1:])
+	case "lock":
+		return lockCmd(args[1:])
 	case "version":
 		fmt.Printf("%s\n", townctl.BinaryVersion)
 		return 0
 	default:
-		slog.Error("unknown command", "command", args[0], "usage", "town-ctl <apply|status|version> [flags]")
+		slog.Error("unknown command", "command", args[0], "usage", "town-ctl <apply|status|lock|version> [flags]")
 		return 1
 	}
 }
@@ -190,5 +201,64 @@ func statusCmd(args []string) int {
 			return 2
 		}
 	}
+	return 0
+}
+
+// lockCmd implements the town-ctl lock subcommand.
+//
+// Subcommands:
+//
+//	clear   Force-expire the desired_topology_lock advisory lock.
+func lockCmd(args []string) int {
+	if len(args) == 0 {
+		slog.Error("lock: missing subcommand", "usage", "town-ctl lock <clear> [flags]")
+		return 1
+	}
+	switch args[0] {
+	case "clear":
+		return lockClearCmd(args[1:])
+	default:
+		slog.Error("lock: unknown subcommand", "subcommand", args[0], "usage", "town-ctl lock <clear> [flags]")
+		return 1
+	}
+}
+
+// lockClearCmd force-expires the desired_topology_lock advisory lock.
+func lockClearCmd(args []string) int {
+	fs := flag.NewFlagSet("lock clear", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	var doltDSN string
+	fs.StringVar(&doltDSN, "dolt-dsn", "", "Dolt MySQL DSN (env: GT_DOLT_DSN)")
+
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	dsn := doltDSN
+	if dsn == "" {
+		dsn = os.Getenv("GT_DOLT_DSN")
+	}
+	if dsn == "" {
+		slog.Error("lock clear: Dolt DSN is required; set GT_DOLT_DSN or pass --dolt-dsn")
+		return 1
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	db, err := townctl.ConnectDSN(ctx, dsn)
+	if err != nil {
+		slog.Error("lock clear: connect to Dolt", "error", err.Error())
+		return 1
+	}
+	defer db.Close()
+
+	if err := townctl.ClearTopologyLock(db); err != nil {
+		slog.Error("lock clear: failed", "error", err.Error())
+		return 1
+	}
+
+	fmt.Fprintln(os.Stdout, "desired_topology_lock cleared")
 	return 0
 }

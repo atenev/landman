@@ -142,3 +142,20 @@ func TopologyLockUpsertSQL(holder string) Stmt {
 		Args: []any{holder},
 	}
 }
+
+// ClearTopologyLock force-deletes the desired_topology_lock sentinel row,
+// immediately expiring any in-flight advisory lock. This is an operator
+// escape hatch for cases where a writer crashed while holding the lock and
+// the 30 s TTL has not yet elapsed. It is intentionally destructive: any
+// writer that checks the lock after this call will see no lock and proceed.
+//
+// Use with caution: if two writers are concurrently active, clearing the lock
+// will not prevent them from both proceeding; their Dolt transactions will
+// still race. The canonical safe operation is to wait for the TTL to expire.
+func ClearTopologyLock(db *DB) error {
+	_, err := db.Exec("DELETE FROM desired_topology_lock WHERE singleton = 'X'")
+	if err != nil {
+		return fmt.Errorf("clear topology lock: %w", err)
+	}
+	return nil
+}
