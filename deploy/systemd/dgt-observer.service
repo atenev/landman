@@ -1,0 +1,101 @@
+# dgt-observer.service — DGT Observer metrics exporter for bare metal deployment
+#
+# The observer polls Dolt for topology and Beads state and exposes Prometheus
+# metrics on :9091/metrics.
+#
+# ─── Installation ────────────────────────────────────────────────────────────
+#
+# 1. Copy this file:
+#
+#      sudo cp dgt-observer.service /etc/systemd/system/
+#      sudo systemctl daemon-reload
+#
+# 2. Create the environment file (never commit this file):
+#
+#      sudo mkdir -p /etc/dgt
+#      sudo tee /etc/dgt/observer.env <<'EOF'
+#      DGT_DOLT_DSN=root:@tcp(127.0.0.1:3306)/dgt
+#      EOF
+#      sudo chmod 600 /etc/dgt/observer.env
+#      sudo chown root:root /etc/dgt/observer.env
+#
+# 3. Install the dgt-observer binary:
+#
+#      sudo cp result/bin/dgt-observer /usr/local/bin/dgt-observer
+#      sudo chmod 755 /usr/local/bin/dgt-observer
+#
+# 4. Enable and start:
+#
+#      sudo systemctl enable --now dgt-observer
+#
+# 5. Check status and logs:
+#
+#      systemctl status dgt-observer
+#      journalctl -u dgt-observer -f
+#
+# 6. Verify metrics:
+#
+#      curl -s http://localhost:9091/metrics | grep dgt_
+#
+# ─── Surveyor co-location ────────────────────────────────────────────────────
+#
+# The observer is designed to run alongside the Surveyor on the same bare metal
+# host. Both services connect to the same local Dolt instance. The observer is
+# read-only and does not interfere with the Surveyor's write operations.
+#
+# Recommended unit ordering when both are present:
+#   After=network.target gastown-surveyor@<town>.service (optional soft dep)
+#
+# ─── Prometheus scrape config ────────────────────────────────────────────────
+#
+# Add to prometheus.yml:
+#
+#   scrape_configs:
+#     - job_name: dgt-observer
+#       static_configs:
+#         - targets: ['<host>:9091']
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=DGT Observer — topology and beads metrics exporter
+Documentation=https://github.com/tenev/dgt
+After=network.target
+
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Run as a dedicated low-privilege user. Create with:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin dgt-observer
+User=dgt-observer
+Group=dgt-observer
+
+# Secrets and DSN configuration. Required keys:
+#   DGT_DOLT_DSN — MySQL DSN for Dolt (e.g. root:@tcp(127.0.0.1:3306)/dgt)
+EnvironmentFile=/etc/dgt/observer.env
+
+ExecStart=/usr/local/bin/dgt-observer \
+  --dolt-dsn=${DGT_DOLT_DSN} \
+  --interval=15s \
+  --metrics-addr=:9091
+
+Restart=on-failure
+RestartSec=5s
+
+TimeoutStopSec=15s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dgt-observer
+
+# Harden: observer is read-only; it only needs network and /etc/dgt.
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
