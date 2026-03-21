@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -39,6 +41,7 @@ const (
 type RigReconciler struct {
 	client.Client
 	Scheme             *runtime.Scheme
+	Recorder           record.EventRecorder
 	StatusSyncInterval time.Duration
 	// ConnectDolt overrides the Dolt connection factory for testing.
 	// When nil, openDoltConnectionFromSpec is used.
@@ -81,10 +84,11 @@ func (r *RigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	// 4. Resolve parent GasTown → DoltInstance readiness gate.
 	var gt gasv1alpha1.GasTown
 	if err := r.Get(ctx, client.ObjectKey{Name: rig.Spec.TownRef}, &gt); err != nil {
+		msg := fmt.Sprintf("gastown %q not found", rig.Spec.TownRef)
 		logger.Info("parent gastown not found, requeuing", "townRef", rig.Spec.TownRef)
-		r.setCondition(&rig, "DesiredTopologyInSync", metav1.ConditionFalse,
-			"GasTownNotFound", fmt.Sprintf("gastown %q not found", rig.Spec.TownRef))
+		r.setCondition(&rig, "DesiredTopologyInSync", metav1.ConditionFalse, "GasTownNotFound", msg)
 		_ = r.Status().Update(ctx, &rig)
+		r.emitEvent(&rig, corev1.EventTypeWarning, "GasTownNotFound", msg)
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
@@ -97,6 +101,7 @@ func (r *RigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		logger.Info("dolt not ready, requeuing", "reason", err.Error())
 		r.setCondition(&rig, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltNotReady", err.Error())
 		_ = r.Status().Update(ctx, &rig)
+		r.emitEvent(&rig, corev1.EventTypeWarning, "DoltNotReady", err.Error())
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 	defer dolt.Close()
@@ -111,6 +116,7 @@ func (r *RigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		logger.Error(err, "failed to sync to dolt")
 		r.setCondition(&rig, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltWriteFailed", err.Error())
 		_ = r.Status().Update(ctx, &rig)
+		r.emitEvent(&rig, corev1.EventTypeWarning, "DoltWriteFailed", err.Error())
 		return ctrl.Result{}, err
 	}
 
@@ -123,6 +129,8 @@ func (r *RigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, fmt.Errorf("update status: %w", err)
 	}
 
+	r.emitEventf(&rig, corev1.EventTypeNormal, "Synced",
+		"desired_rigs written successfully (commit %s)", doltCommit)
 	logger.Info("reconciled", "doltCommit", doltCommit)
 	return ctrl.Result{}, nil
 }
@@ -330,6 +338,8 @@ func (r *RigReconciler) handleDeletion(ctx context.Context, rig *gasv1alpha1.Rig
 	if err := r.setRigDisabled(ctx, dolt, rig.Name); err != nil {
 		return ctrl.Result{}, fmt.Errorf("drain: disable rig: %w", err)
 	}
+	r.emitEvent(rig, corev1.EventTypeNormal, "DrainStarted",
+		"rig marked disabled in desired_rigs; waiting for agents to stop")
 
 	// Check if rig is stopped in actual_rigs.
 	stopped, err := r.isRigStopped(ctx, dolt, rig.Name)
@@ -341,6 +351,8 @@ func (r *RigReconciler) handleDeletion(ctx context.Context, rig *gasv1alpha1.Rig
 	}
 
 	// Rig is stopped — remove finalizer.
+	r.emitEvent(rig, corev1.EventTypeNormal, "DrainComplete",
+		"rig agents stopped; removing drain finalizer")
 	controllerutil.RemoveFinalizer(rig, rigDrainFinalizer)
 	if err := r.Update(ctx, rig); err != nil {
 		return ctrl.Result{}, fmt.Errorf("remove finalizer: %w", err)
@@ -541,6 +553,24 @@ func (r *RigReconciler) setCondition(
 		Reason:             reason,
 		Message:            message,
 	})
+}
+
+// emitEvent records a Kubernetes Event against the Rig object.
+// It is a no-op when r.Recorder is nil (e.g. in unit tests).
+func (r *RigReconciler) emitEvent(rig *gasv1alpha1.Rig, eventType, reason, message string) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Event(rig, eventType, reason, message)
+}
+
+// emitEventf records a formatted Kubernetes Event against the Rig object.
+// It is a no-op when r.Recorder is nil (e.g. in unit tests).
+func (r *RigReconciler) emitEventf(rig *gasv1alpha1.Rig, eventType, reason, messageFmt string, args ...any) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Eventf(rig, eventType, reason, messageFmt, args...)
 }
 
 // rigStatusToHealth maps actual_rigs.status values to the RigHealth string.

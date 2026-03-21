@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -40,6 +41,7 @@ const (
 type GasTownReconciler struct {
 	client.Client
 	Scheme             *runtime.Scheme
+	Recorder           record.EventRecorder
 	StatusSyncInterval time.Duration
 	// ConnectDolt overrides the Dolt connection factory for testing.
 	// When nil, openDoltConnectionFromSpec is used.
@@ -52,6 +54,7 @@ type GasTownReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is the main reconcile loop for GasTown.
 func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -92,6 +95,7 @@ func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		logger.Info("dolt not ready, requeuing", "reason", err.Error())
 		r.setCondition(&gt, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltNotReady", err.Error())
 		_ = r.Status().Update(ctx, &gt)
+		r.emitEvent(&gt, corev1.EventTypeWarning, "DoltNotReady", err.Error())
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 	defer dolt.Close()
@@ -102,6 +106,7 @@ func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		logger.Error(err, "failed to sync to dolt")
 		r.setCondition(&gt, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltWriteFailed", err.Error())
 		_ = r.Status().Update(ctx, &gt)
+		r.emitEvent(&gt, corev1.EventTypeWarning, "DoltWriteFailed", err.Error())
 		return ctrl.Result{}, err
 	}
 
@@ -111,6 +116,7 @@ func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			logger.Error(err, "failed to reconcile surveyor deployment")
 			r.setCondition(&gt, "SurveyorRunning", metav1.ConditionFalse, "ReconcileError", err.Error())
 			_ = r.Status().Update(ctx, &gt)
+			r.emitEvent(&gt, corev1.EventTypeWarning, "SurveyorError", err.Error())
 			return ctrl.Result{}, err
 		}
 	}
@@ -124,6 +130,8 @@ func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, fmt.Errorf("update status: %w", err)
 	}
 
+	r.emitEventf(&gt, corev1.EventTypeNormal, "Synced",
+		"desired_town written successfully (commit %s)", doltCommit)
 	logger.Info("reconciled", "doltCommit", doltCommit)
 	return ctrl.Result{}, nil
 }
@@ -519,6 +527,24 @@ func (r *GasTownReconciler) setCondition(
 // surveyorDeploymentName returns the Deployment name for the given GasTown.
 func surveyorDeploymentName(gastownName string) string {
 	return fmt.Sprintf("%s-surveyor", gastownName)
+}
+
+// emitEvent records a Kubernetes Event against the GasTown object.
+// It is a no-op when r.Recorder is nil (e.g. in unit tests).
+func (r *GasTownReconciler) emitEvent(gt *gasv1alpha1.GasTown, eventType, reason, message string) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Event(gt, eventType, reason, message)
+}
+
+// emitEventf records a formatted Kubernetes Event against the GasTown object.
+// It is a no-op when r.Recorder is nil (e.g. in unit tests).
+func (r *GasTownReconciler) emitEventf(gt *gasv1alpha1.GasTown, eventType, reason, messageFmt string, args ...any) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Eventf(gt, eventType, reason, messageFmt, args...)
 }
 
 // openDoltConnectionFromSpec resolves the DoltInstance directly from a NamespacedRef.
