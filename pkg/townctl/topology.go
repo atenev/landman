@@ -103,8 +103,8 @@ func resolveAgentConfigRows(m *manifest.TownManifest) ([]agentConfigRow, []agent
 		defaultMaxPolecats = 20
 	}
 
-	var rows []agentConfigRow
-	var keys []agentConfigKey
+	rows := make([]agentConfigRow, 0, len(m.Rigs)*5)
+	keys := make([]agentConfigKey, 0, len(m.Rigs)*5)
 
 	for _, rig := range m.Rigs {
 		mayorModel := ""
