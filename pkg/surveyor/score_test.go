@@ -183,6 +183,62 @@ func TestComputeScore_DisabledRig_NotConvergedWhenRunning(t *testing.T) {
 	}
 }
 
+func TestComputeScore_DisabledRig_NotConvergedWhenStoppedButEnabled(t *testing.T) {
+	// Disabled rig (desired.Enabled=false) where actual.Enabled=true and
+	// actual.Status="stopped". Even though the process is stopped, the Dolt
+	// enabled flag still disagrees → not converged (scoreRig line 321).
+	now := time.Now()
+	cfg := surveyor.DefaultProductionConfig()
+	desired := []surveyor.DesiredRig{{Name: "legacy", Enabled: false}}
+	actual := surveyor.ActualTopology{
+		Rigs: []surveyor.RigState{{
+			Name: "legacy", Enabled: true, Status: "stopped",
+			LastSeen: now.Add(-5 * time.Second),
+		}},
+	}
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
+	if result.Score != 0.0 {
+		t.Errorf("disabled rig but enabled in Dolt and stopped: score = %.3f, want 0.0", result.Score)
+	}
+}
+
+func TestComputeScore_DisabledRig_NotConvergedWhenAbsentFromActual(t *testing.T) {
+	// Disabled rig (desired.Enabled=false) that has no actual entry at all.
+	// scoreRig returns false on the !exists guard.
+	now := time.Now()
+	cfg := surveyor.DefaultProductionConfig()
+	desired := []surveyor.DesiredRig{{Name: "legacy", Enabled: false}}
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, surveyor.ActualTopology{}, cfg, now)
+	if result.Score != 0.0 {
+		t.Errorf("disabled rig absent from actual: score = %.3f, want 0.0", result.Score)
+	}
+	if result.RigPass != 0 || result.RigTotal != 1 {
+		t.Errorf("rig counts: pass=%d total=%d, want 0/1", result.RigPass, result.RigTotal)
+	}
+}
+
+func TestComputeScore_RigFreshButMayorStale_NotConverged(t *testing.T) {
+	// Rig LastSeen is fresh; Mayor exists but its LastSeen is stale. scoreRig
+	// passes the rig health check but fails the mayor freshness check (line 334).
+	now := time.Now()
+	cfg := surveyor.DefaultProductionConfig() // StaleTTL = 60s
+	desired := []surveyor.DesiredRig{{Name: "backend", Enabled: true}}
+	actual := surveyor.ActualTopology{
+		Rigs: []surveyor.RigState{{
+			Name: "backend", Enabled: true, Status: "running",
+			LastSeen: now.Add(-5 * time.Second), // fresh
+		}},
+		Agents: []surveyor.AgentState{{
+			RigName: "backend", Role: "mayor", Status: "running",
+			LastSeen: now.Add(-90 * time.Second), // stale mayor
+		}},
+	}
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
+	if result.Score != 0.0 {
+		t.Errorf("stale mayor: score = %.3f, want 0.0", result.Score)
+	}
+}
+
 // ─── ComputeScore — Polecat pool scoring ─────────────────────────────────────
 
 func TestComputeScore_PolecatPool_Converged(t *testing.T) {
@@ -267,6 +323,52 @@ func TestComputeScore_PolecatPool_ExceedsMax_NotConverged(t *testing.T) {
 	}
 }
 
+func TestComputeScore_PolecatPool_WitnessStale_NotConverged(t *testing.T) {
+	// WitnessEnabled=true but the witness agent's LastSeen is stale.
+	now := time.Now()
+	cfg := surveyor.DefaultProductionConfig() // StaleTTL = 60s
+	desired := []surveyor.DesiredRig{{
+		Name: "backend", Enabled: true, MaxPolecats: 5, WitnessEnabled: true,
+	}}
+	actual := surveyor.ActualTopology{
+		Rigs: []surveyor.RigState{{
+			Name: "backend", Enabled: true, Status: "running",
+			LastSeen: now.Add(-5 * time.Second),
+		}},
+		Agents: []surveyor.AgentState{
+			{RigName: "backend", Role: "mayor", Status: "running", LastSeen: now.Add(-5 * time.Second)},
+			{RigName: "backend", Role: "witness", Status: "running", LastSeen: now.Add(-90 * time.Second)}, // stale
+		},
+	}
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
+	if result.PoolPass != 0 {
+		t.Errorf("stale witness: pool should not converge, got pool_pass=%d", result.PoolPass)
+	}
+}
+
+func TestComputeScore_PolecatPool_WitnessStopped_NotConverged(t *testing.T) {
+	// WitnessEnabled=true but the witness agent status is "stopped" (not "running").
+	now := time.Now()
+	cfg := surveyor.DefaultProductionConfig()
+	desired := []surveyor.DesiredRig{{
+		Name: "backend", Enabled: true, MaxPolecats: 5, WitnessEnabled: true,
+	}}
+	actual := surveyor.ActualTopology{
+		Rigs: []surveyor.RigState{{
+			Name: "backend", Enabled: true, Status: "running",
+			LastSeen: now.Add(-5 * time.Second),
+		}},
+		Agents: []surveyor.AgentState{
+			{RigName: "backend", Role: "mayor", Status: "running", LastSeen: now.Add(-5 * time.Second)},
+			{RigName: "backend", Role: "witness", Status: "stopped", LastSeen: now.Add(-5 * time.Second)},
+		},
+	}
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
+	if result.PoolPass != 0 {
+		t.Errorf("stopped witness: pool should not converge, got pool_pass=%d", result.PoolPass)
+	}
+}
+
 // ─── ComputeScore — custom role scoring ──────────────────────────────────────
 
 func TestComputeScore_TownScopedRole_Converged(t *testing.T) {
@@ -315,6 +417,71 @@ func TestComputeScore_RigScopedRole_NotConverged_WhenAbsent(t *testing.T) {
 	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired, CustomRoles: desiredRoles}, actual, cfg, now)
 	if result.RigRolePass != 0 {
 		t.Errorf("absent rig role: should not converge, got rig_role_pass=%d", result.RigRolePass)
+	}
+}
+
+func TestComputeScore_UnknownScopeTreatedAsRigScoped(t *testing.T) {
+	// rigNameForRole falls through to the rig-scoped branch for unknown Scope
+	// values (score.go:370-375). The role key uses dcr.RigName.
+	now := time.Now()
+	cfg := surveyor.DefaultProductionConfig()
+	desiredRoles := []surveyor.DesiredCustomRole{{
+		Name: "auditor", Scope: "cluster", // unknown scope → treated as rig
+		RigName: "r", InstanceIndex: 0,
+	}}
+	actual := surveyor.ActualTopology{
+		CustomRoles: []surveyor.CustomRoleState{{
+			RigName: "r", RoleName: "auditor", InstanceIndex: 0,
+			Status: "running", LastSeen: now.Add(-5 * time.Second),
+		}},
+	}
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{CustomRoles: desiredRoles}, actual, cfg, now)
+	// Unknown scope maps to rig-scoped bucket: RigRoleTotal=1.
+	if result.RigRoleTotal != 1 {
+		t.Errorf("unknown scope: RigRoleTotal = %d, want 1", result.RigRoleTotal)
+	}
+	// Role exists and is running → should converge.
+	if result.RigRolePass != 1 {
+		t.Errorf("unknown scope: RigRolePass = %d, want 1 (falls back to rig-scoped lookup)", result.RigRolePass)
+	}
+}
+
+func TestComputeScore_CustomRole_InstanceIndexNonZero(t *testing.T) {
+	// InstanceIndex > 0: actualCustomRoleKey encodes index, so index=1 must
+	// NOT match an actual row with index=0.
+	now := time.Now()
+	cfg := surveyor.DefaultProductionConfig()
+	desiredRoles := []surveyor.DesiredCustomRole{{
+		Name: "auditor", Scope: "rig", RigName: "r", InstanceIndex: 1,
+	}}
+	actual := surveyor.ActualTopology{
+		CustomRoles: []surveyor.CustomRoleState{{
+			RigName: "r", RoleName: "auditor", InstanceIndex: 0, // index 0 ≠ desired 1
+			Status: "running", LastSeen: now.Add(-5 * time.Second),
+		}},
+	}
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{CustomRoles: desiredRoles}, actual, cfg, now)
+	if result.RigRolePass != 0 {
+		t.Errorf("instance index mismatch: RigRolePass = %d, want 0", result.RigRolePass)
+	}
+}
+
+func TestComputeScore_CustomRole_InstanceIndexOne_Converged(t *testing.T) {
+	// InstanceIndex=1 with a matching actual row at index=1 should converge.
+	now := time.Now()
+	cfg := surveyor.DefaultProductionConfig()
+	desiredRoles := []surveyor.DesiredCustomRole{{
+		Name: "auditor", Scope: "rig", RigName: "r", InstanceIndex: 1,
+	}}
+	actual := surveyor.ActualTopology{
+		CustomRoles: []surveyor.CustomRoleState{{
+			RigName: "r", RoleName: "auditor", InstanceIndex: 1,
+			Status: "running", LastSeen: now.Add(-5 * time.Second),
+		}},
+	}
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{CustomRoles: desiredRoles}, actual, cfg, now)
+	if result.RigRolePass != 1 {
+		t.Errorf("instance index 1: RigRolePass = %d, want 1", result.RigRolePass)
 	}
 }
 
@@ -453,6 +620,47 @@ func TestRunVerifyLoop_DevelopmentThreshold_ConvergesAtPointNine(t *testing.T) {
 	outcome := surveyor.RunVerifyLoop(scores, cfg)
 	if !outcome.Converged {
 		t.Errorf("dev threshold 0.9: expected converged at 0.9, got %+v", outcome)
+	}
+}
+
+func TestRunVerifyLoop_MaxRetriesOne_ExhaustsAfterOneAttempt(t *testing.T) {
+	// MaxRetries=1: the loop should exhaust after exactly one non-converging
+	// attempt (boundary condition: i+1 >= MaxRetries on first iteration).
+	cfg := surveyor.VerifyConfig{
+		ConvergenceThreshold: 1.0,
+		MaxRetries:           1,
+		StaleTTL:             60 * time.Second,
+		BaseDelay:            5 * time.Second,
+		MaxDelay:             120 * time.Second,
+	}
+	outcome := surveyor.RunVerifyLoop([]float64{0.5}, cfg)
+	if outcome.Converged {
+		t.Error("MaxRetries=1, score=0.5: should not converge")
+	}
+	if outcome.Escalation != surveyor.EscalationVerifyExhausted {
+		t.Errorf("escalation = %q, want %q", outcome.Escalation, surveyor.EscalationVerifyExhausted)
+	}
+	if outcome.Attempts != 1 {
+		t.Errorf("attempts = %d, want 1", outcome.Attempts)
+	}
+}
+
+func TestRunVerifyLoop_MaxRetriesOne_ConvergesIfScoreHigh(t *testing.T) {
+	// MaxRetries=1 with a converging score: convergence check runs before
+	// exhaustion, so it should succeed in one attempt.
+	cfg := surveyor.VerifyConfig{
+		ConvergenceThreshold: 1.0,
+		MaxRetries:           1,
+		StaleTTL:             60 * time.Second,
+		BaseDelay:            5 * time.Second,
+		MaxDelay:             120 * time.Second,
+	}
+	outcome := surveyor.RunVerifyLoop([]float64{1.0}, cfg)
+	if !outcome.Converged {
+		t.Errorf("MaxRetries=1, score=1.0: expected converged, got %+v", outcome)
+	}
+	if outcome.Attempts != 1 {
+		t.Errorf("attempts = %d, want 1", outcome.Attempts)
 	}
 }
 

@@ -49,7 +49,8 @@ func (v *DoltInstanceValidator) Handle(_ context.Context, req admission.Request)
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	// Rule 8: replicas must be 1 (MVP constraint, ADR-0005 D4).
+	// Rule 8: replicas must be exactly 1 (MVP constraint, ADR-0005 D4).
+	// Reject both 0 (no running instance) and >1 (multi-replica not supported).
 	if di.Spec.Replicas != 1 {
 		return admission.Denied(fmt.Sprintf(
 			"spec.replicas: Invalid value: %d: replicas must be 1 in "+

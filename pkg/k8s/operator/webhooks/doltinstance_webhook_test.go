@@ -139,6 +139,32 @@ func TestDoltInstanceValidator_ImmutableFields(t *testing.T) {
 			new:       makeDoltInstanceFull(1, "v1.42.0", "standard", "10Gi"),
 			wantAllow: false,
 		},
+		// Mixed v-prefix: parseSemver strips leading 'v', so "1.42.0" and
+		// "v1.42.0" must parse identically.
+		{
+			name:      "mixed prefix upgrade allowed (no-v to v)",
+			old:       makeDoltInstanceFull(1, "1.42.0", "standard", "10Gi"),
+			new:       makeDoltInstanceFull(1, "v1.43.0", "standard", "10Gi"),
+			wantAllow: true,
+		},
+		{
+			name:      "mixed prefix downgrade denied (v to no-v)",
+			old:       makeDoltInstanceFull(1, "v1.42.0", "standard", "10Gi"),
+			new:       makeDoltInstanceFull(1, "1.41.0", "standard", "10Gi"),
+			wantAllow: false,
+		},
+		{
+			name:      "same version UPDATE allowed",
+			old:       makeDoltInstanceFull(1, "v1.42.0", "standard", "10Gi"),
+			new:       makeDoltInstanceFull(1, "v1.42.0", "standard", "10Gi"),
+			wantAllow: true,
+		},
+		{
+			name:      "same version mixed prefix UPDATE allowed",
+			old:       makeDoltInstanceFull(1, "1.42.0", "standard", "10Gi"),
+			new:       makeDoltInstanceFull(1, "v1.42.0", "standard", "10Gi"),
+			wantAllow: true,
+		},
 	}
 
 	for _, tc := range tests {
