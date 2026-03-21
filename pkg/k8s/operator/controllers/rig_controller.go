@@ -88,7 +88,9 @@ func (r *RigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl
 		msg := fmt.Sprintf("gastown %q not found", rig.Spec.TownRef)
 		logger.Info("parent gastown not found, requeuing", "townRef", rig.Spec.TownRef)
 		r.setCondition(&rig, "DesiredTopologyInSync", metav1.ConditionFalse, "GasTownNotFound", msg)
-		_ = r.Status().Update(ctx, &rig)
+		if err := r.Status().Update(ctx, &rig); err != nil {
+			logger.Error(err, "failed to update rig status")
+		}
 		r.emitEvent(&rig, corev1.EventTypeWarning, "GasTownNotFound", msg)
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
@@ -101,7 +103,9 @@ func (r *RigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl
 	if err != nil {
 		logger.Info("dolt not ready, requeuing", "reason", err.Error())
 		r.setCondition(&rig, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltNotReady", err.Error())
-		_ = r.Status().Update(ctx, &rig)
+		if err := r.Status().Update(ctx, &rig); err != nil {
+			logger.Error(err, "failed to update rig status")
+		}
 		r.emitEvent(&rig, corev1.EventTypeWarning, "DoltNotReady", err.Error())
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
@@ -116,7 +120,9 @@ func (r *RigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl
 	if err != nil {
 		logger.Error(err, "failed to sync to dolt")
 		r.setCondition(&rig, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltWriteFailed", err.Error())
-		_ = r.Status().Update(ctx, &rig)
+		if err := r.Status().Update(ctx, &rig); err != nil {
+			logger.Error(err, "failed to update rig status")
+		}
 		r.emitEvent(&rig, corev1.EventTypeWarning, "DoltWriteFailed", err.Error())
 		return ctrl.Result{}, err
 	}
