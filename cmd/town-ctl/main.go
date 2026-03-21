@@ -25,6 +25,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,18 +40,20 @@ import (
 )
 
 func main() {
+	// Configure structured logging to stderr for all diagnostic output.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	os.Exit(run(os.Args[1:]))
 }
 
 func run(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: town-ctl <apply|version> [flags]")
+		slog.Error("missing command", "usage", "town-ctl <apply|version> [flags]")
 		return 1
 	}
 	switch args[0] {
 	case "apply":
 		if err := applyCmd(args[1:]); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			slog.Error("apply failed", "error", err.Error())
 			return 1
 		}
 		return 0
@@ -58,7 +61,7 @@ func run(args []string) int {
 		fmt.Printf("%s\n", townctl.BinaryVersion)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %q\nusage: town-ctl <apply|version> [flags]\n", args[0])
+		slog.Error("unknown command", "command", args[0], "usage", "town-ctl <apply|version> [flags]")
 		return 1
 	}
 }
@@ -129,7 +132,7 @@ func applyCmd(args []string) error {
 
 	// 4a. Warn about extension slots (e.g. [[rig.role]] blocks).
 	for _, w := range manifest.WarnExtensionSlots(m) {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+		slog.Warn("extension slot ignored", "detail", w)
 	}
 
 	// 5. Resolve secrets.
@@ -408,7 +411,7 @@ func applyWrite(m *manifest.TownManifest, dsn string) error {
 		return fmt.Errorf("commit transaction: %w", err)
 	}
 
-	fmt.Printf("town-ctl: apply successful (%d statements)\n", len(allStmts))
+	slog.Info("apply successful", "stmt_count", len(allStmts))
 	return launchAgents(m)
 }
 
@@ -433,7 +436,7 @@ func ensureSurveyor(m *manifest.TownManifest) error {
 	pidFile := filepath.Join(home, ".surveyor.pid")
 
 	if alive := processAlive(pidFile); alive {
-		fmt.Println("town-ctl: surveyor already running")
+		slog.Info("surveyor already running", "pid_file", pidFile)
 		return nil
 	}
 
@@ -441,7 +444,7 @@ func ensureSurveyor(m *manifest.TownManifest) error {
 	gtBin, err := exec.LookPath("gt")
 	if err != nil {
 		// gt not found — warn but do not fail; manual launch may be intended.
-		fmt.Fprintf(os.Stderr, "warning: surveyor=true but 'gt' binary not found: %v\n", err)
+		slog.Warn("surveyor=true but 'gt' binary not found", "error", err.Error())
 		return nil
 	}
 
@@ -461,7 +464,7 @@ func ensureSurveyor(m *manifest.TownManifest) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start surveyor: %w", err)
 	}
-	fmt.Printf("town-ctl: started surveyor (pid %d)\n", cmd.Process.Pid)
+	slog.Info("started surveyor", "pid", cmd.Process.Pid)
 	return nil
 }
 

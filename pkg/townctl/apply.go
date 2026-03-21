@@ -8,6 +8,7 @@ package townctl
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -22,12 +23,24 @@ type ApplyOptions struct {
 	// as an overlay (applied last, overrides all other values).
 	Env string
 
+	// Logger is the structured logger for diagnostic output. When nil,
+	// slog.Default() is used.
+	Logger *slog.Logger
+
 	// Dolt connection parameters. Defaults are applied when zero values.
 	DoltHost     string
 	DoltPort     int
 	DoltDB       string
 	DoltUser     string
 	DoltPassword string
+}
+
+// logger returns the configured logger or the slog default.
+func (o *ApplyOptions) logger() *slog.Logger {
+	if o.Logger != nil {
+		return o.Logger
+	}
+	return slog.Default()
 }
 
 // applyDefaults fills zero-value Dolt connection fields with defaults.
@@ -117,8 +130,9 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 	}
 
 	// Emit warnings for unrecognised extension slots.
+	log := opts.logger()
 	for _, warn := range manifest.WarnExtensionSlots(m) {
-		fmt.Fprintf(os.Stderr, "town-ctl: WARNING: %s\n", warn)
+		log.Warn("extension slot ignored", "detail", warn)
 	}
 
 	// Step 6 — (Dry-run: skip Dolt connection)
@@ -149,11 +163,11 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 		if err := EnsureSurveyor(gtHome, manifestDir, tuning); err != nil {
 			// Non-fatal: log a warning but do not fail the apply. The Surveyor
 			// can be started manually or via systemd if auto-launch fails.
-			fmt.Fprintf(os.Stderr, "town-ctl: WARNING: %s\n", err)
+			log.Warn("surveyor launch failed", "error", err.Error())
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "town-ctl: apply complete\n")
+	log.Info("apply complete", "manifest", manifestPath)
 	return nil
 }
 
