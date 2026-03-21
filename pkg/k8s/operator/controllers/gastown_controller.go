@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gasv1alpha1 "github.com/tenev/dgt/pkg/k8s/operator/v1alpha1"
@@ -24,6 +25,10 @@ const (
 
 	// defaultSurveyorImage is the container image used when SurveyorImage is unset.
 	defaultSurveyorImage = "ghcr.io/tenev/gastown-surveyor:latest"
+
+	// gasTownCleanupFinalizer is set on every GasTown to ensure the desired_town
+	// Dolt row is removed when the CR is deleted.
+	gasTownCleanupFinalizer = "gastown.io/town-cleanup"
 )
 
 // GasTownReconciler reconciles GasTown CRs.
@@ -61,7 +66,22 @@ func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, fmt.Errorf("get gastown: %w", err)
 	}
 
-	// 2. Resolve DoltInstance readiness gate.
+	// 2. Handle deletion: remove the desired_town row from Dolt before the
+	//    object is garbage-collected.
+	if !gt.DeletionTimestamp.IsZero() {
+		return r.handleDeletion(ctx, &gt)
+	}
+
+	// 3. Ensure the cleanup finalizer is registered.
+	if !controllerutil.ContainsFinalizer(&gt, gasTownCleanupFinalizer) {
+		controllerutil.AddFinalizer(&gt, gasTownCleanupFinalizer)
+		if err := r.Update(ctx, &gt); err != nil {
+			return ctrl.Result{}, fmt.Errorf("add finalizer: %w", err)
+		}
+		return ctrl.Result{Requeue: true}, nil
+	}
+
+	// 4. Resolve DoltInstance readiness gate.
 	//    GasTown is cluster-scoped; DoltRef carries its own namespace.
 	connectDolt := r.ConnectDolt
 	if connectDolt == nil {
@@ -76,7 +96,7 @@ func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 	defer dolt.Close()
 
-	// 3. Write desired_town to Dolt.
+	// 5. Write desired_town to Dolt.
 	doltCommit, err := r.syncToDolt(ctx, dolt, &gt)
 	if err != nil {
 		logger.Error(err, "failed to sync to dolt")
@@ -85,7 +105,7 @@ func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
-	// 4. Reconcile Surveyor Deployment.
+	// 6. Reconcile Surveyor Deployment.
 	if gt.Spec.Agents.Surveyor {
 		if err := r.reconcileSurveyor(ctx, &gt, dolt); err != nil {
 			logger.Error(err, "failed to reconcile surveyor deployment")
@@ -95,7 +115,7 @@ func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	// 5. Update status.
+	// 7. Update status.
 	gt.Status.DoltCommit = doltCommit
 	gt.Status.ObservedGeneration = gt.Generation
 	r.setCondition(&gt, "DesiredTopologyInSync", metav1.ConditionTrue, "Synced",
@@ -410,6 +430,66 @@ LIMIT 1`
 		}
 	}
 	return nil
+}
+
+// handleDeletion removes the desired_town Dolt row for the GasTown and then
+// removes the finalizer so the object can be garbage-collected. If Dolt is
+// unavailable the reconciler requeues rather than failing permanently.
+func (r *GasTownReconciler) handleDeletion(
+	ctx context.Context,
+	gt *gasv1alpha1.GasTown,
+) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(gt, gasTownCleanupFinalizer) {
+		return ctrl.Result{}, nil
+	}
+
+	connectDolt := r.ConnectDolt
+	if connectDolt == nil {
+		connectDolt = openDoltConnectionFromSpec
+	}
+	dolt, err := connectDolt(ctx, r.Client, gt.Spec.DoltRef)
+	if err != nil {
+		return ctrl.Result{RequeueAfter: 10 * time.Second},
+			fmt.Errorf("dolt not ready during deletion: %w", err)
+	}
+	defer dolt.Close()
+
+	if err := r.deleteFromDolt(ctx, dolt, gt.Name); err != nil {
+		return ctrl.Result{}, fmt.Errorf("delete from dolt: %w", err)
+	}
+
+	controllerutil.RemoveFinalizer(gt, gasTownCleanupFinalizer)
+	if err := r.Update(ctx, gt); err != nil {
+		return ctrl.Result{}, fmt.Errorf("remove finalizer: %w", err)
+	}
+	return ctrl.Result{}, nil
+}
+
+// deleteFromDolt removes the desired_town row for this GasTown within a
+// versions-first transaction (ADR-0003).
+func (r *GasTownReconciler) deleteFromDolt(
+	ctx context.Context,
+	dolt *doltClient,
+	townName string,
+) error {
+	tx, err := dolt.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// ADR-0003: versions-first even on delete paths.
+	if err := upsertTopologyVersions(ctx, tx, []tableVersion{
+		{Table: "desired_town", Version: 1},
+	}); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM desired_town WHERE name = ?`, townName); err != nil {
+		return fmt.Errorf("delete desired_town: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 // SetupWithManager registers the reconciler with the controller-runtime Manager.

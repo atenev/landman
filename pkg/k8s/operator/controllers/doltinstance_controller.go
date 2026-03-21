@@ -39,6 +39,11 @@ const (
 	ddlInitSchemaVer = "v1"
 	ddlInitSQLKey    = "init.sql"
 	jobTTLSecs       = int32(300) // garbage-collect completed Jobs after 5 minutes
+
+	// doltInstanceCleanupFinalizer is set on every DoltInstance to ensure PVCs
+	// created by the StatefulSet VolumeClaimTemplates are explicitly deleted on
+	// CR removal. Kubernetes does not auto-delete PVCs from VolumeClaimTemplates.
+	doltInstanceCleanupFinalizer = "gastown.io/dolt-cleanup"
 )
 
 // DoltInstanceReconciler reconciles DoltInstance CRs.
@@ -61,6 +66,7 @@ type DoltInstanceReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
@@ -77,7 +83,21 @@ func (r *DoltInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("get doltinstance: %w", err)
 	}
 
-	// 2. Defensive: reject replicas > 1 (admission webhook is primary).
+	// 2. Handle deletion: delete orphaned PVCs before the object is removed.
+	if !di.DeletionTimestamp.IsZero() {
+		return r.handleDeletion(ctx, &di)
+	}
+
+	// 3. Ensure the cleanup finalizer is registered.
+	if !controllerutil.ContainsFinalizer(&di, doltInstanceCleanupFinalizer) {
+		controllerutil.AddFinalizer(&di, doltInstanceCleanupFinalizer)
+		if err := r.Update(ctx, &di); err != nil {
+			return ctrl.Result{}, fmt.Errorf("add finalizer: %w", err)
+		}
+		return ctrl.Result{Requeue: true}, nil
+	}
+
+	// 5. Defensive: reject replicas > 1 (admission webhook is primary).
 	if di.Spec.Replicas > 1 {
 		r.setCondition(&di, "Ready", metav1.ConditionFalse, "ReplicasUnsupported",
 			fmt.Sprintf("spec.replicas: Invalid value: %d: replicas > 1 not supported in"+
@@ -87,26 +107,26 @@ func (r *DoltInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, nil
 	}
 
-	// 3. Ensure the operator-managed DDL init ConfigMap exists.
+	// 6. Ensure the operator-managed DDL init ConfigMap exists.
 	if err := r.reconcileDDLConfigMap(ctx, &di); err != nil {
 		return ctrl.Result{}, r.recordReadyFalse(ctx, &di, "DDLConfigMapError", err)
 	}
 
-	// 4. Reconcile the StatefulSet.
+	// 7. Reconcile the StatefulSet.
 	if err := r.reconcileStatefulSet(ctx, &di); err != nil {
 		return ctrl.Result{}, r.recordReadyFalse(ctx, &di, "StatefulSetError", err)
 	}
 
-	// 5. Reconcile headless and ClusterIP Services.
+	// 8. Reconcile headless and ClusterIP Services.
 	if err := r.reconcileServices(ctx, &di); err != nil {
 		return ctrl.Result{}, r.recordReadyFalse(ctx, &di, "ServiceError", err)
 	}
 
-	// 6. Publish status.endpoint (stable once Services exist, even before pod ready).
+	// 9. Publish status.endpoint (stable once Services exist, even before pod ready).
 	port := svcPort(&di)
 	di.Status.Endpoint = fmt.Sprintf("%s.%s.svc.cluster.local:%d", di.Name, di.Namespace, port)
 
-	// 7. Gate on StatefulSet readiness.
+	// 10. Gate on StatefulSet readiness.
 	ready, err := r.statefulSetReady(ctx, &di)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("check statefulset ready: %w", err)
@@ -122,7 +142,7 @@ func (r *DoltInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	r.setCondition(&di, "Ready", metav1.ConditionTrue, "PodReady",
 		"DoltInstance pod is ready")
 
-	// 8. Reconcile DDL init Job (schema bootstrap on first startup).
+	// 11. Reconcile DDL init Job (schema bootstrap on first startup).
 	ddlDone, err := r.reconcileDDLInitJob(ctx, &di)
 	if err != nil {
 		r.setCondition(&di, "DDLInitialized", metav1.ConditionFalse, "JobFailed", err.Error())
@@ -140,7 +160,7 @@ func (r *DoltInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	r.setCondition(&di, "DDLInitialized", metav1.ConditionTrue, "JobComplete",
 		"Dolt schema initialised successfully")
 
-	// 9. Handle Dolt binary version migrations (only after DDL is initialised).
+	// 12. Handle Dolt binary version migrations (only after DDL is initialised).
 	migrating, err := r.reconcileMigration(ctx, &di)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -151,7 +171,7 @@ func (r *DoltInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	// 10. Persist the running version once converged.
+	// 13. Persist the running version once converged.
 	if di.Status.CurrentVersion != di.Spec.Version {
 		di.Status.CurrentVersion = di.Spec.Version
 	}
@@ -675,6 +695,58 @@ func (r *DoltInstanceReconciler) updateStatefulSetImage(
 	sts.Spec.Template.Spec.Containers[0].Image = fmt.Sprintf("%s:%s", doltBaseImage, version)
 	if err := r.Patch(ctx, &sts, patch); err != nil {
 		return fmt.Errorf("patch statefulset image to %s: %w", version, err)
+	}
+	return nil
+}
+
+// ─── Finalizer / deletion ──────────────────────────────────────────────────────
+
+// handleDeletion cleans up resources that are not auto-deleted by Kubernetes
+// garbage collection when a DoltInstance CR is removed:
+//  1. Deletes PVCs created by the StatefulSet VolumeClaimTemplates (they are
+//     not owned by the StatefulSet and are therefore not GC'd automatically).
+//  2. Removes the finalizer so the object can be garbage-collected.
+func (r *DoltInstanceReconciler) handleDeletion(
+	ctx context.Context,
+	di *gasv1alpha1.DoltInstance,
+) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(di, doltInstanceCleanupFinalizer) {
+		return ctrl.Result{}, nil
+	}
+
+	if err := r.deleteOrphanedPVCs(ctx, di); err != nil {
+		return ctrl.Result{}, fmt.Errorf("delete orphaned PVCs: %w", err)
+	}
+
+	controllerutil.RemoveFinalizer(di, doltInstanceCleanupFinalizer)
+	if err := r.Update(ctx, di); err != nil {
+		return ctrl.Result{}, fmt.Errorf("remove finalizer: %w", err)
+	}
+	return ctrl.Result{}, nil
+}
+
+// deleteOrphanedPVCs deletes all PVCs in the DoltInstance namespace that match
+// the Dolt label selector. These are created by the StatefulSet's
+// VolumeClaimTemplates and are intentionally not owned by the StatefulSet,
+// so Kubernetes does not garbage-collect them automatically.
+func (r *DoltInstanceReconciler) deleteOrphanedPVCs(
+	ctx context.Context,
+	di *gasv1alpha1.DoltInstance,
+) error {
+	var pvcList corev1.PersistentVolumeClaimList
+	if err := r.List(ctx, &pvcList,
+		client.InNamespace(di.Namespace),
+		client.MatchingLabels(doltLabels(di.Name)),
+	); err != nil {
+		return fmt.Errorf("list PVCs: %w", err)
+	}
+	logger := log.FromContext(ctx)
+	for i := range pvcList.Items {
+		pvc := &pvcList.Items[i]
+		if err := r.Delete(ctx, pvc); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete PVC %q: %w", pvc.Name, err)
+		}
+		logger.Info("deleted orphaned PVC", "pvc", pvc.Name)
 	}
 	return nil
 }

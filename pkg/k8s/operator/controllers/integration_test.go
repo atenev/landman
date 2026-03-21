@@ -139,7 +139,10 @@ func TestDoltInstanceReconcile_CreatesResources(t *testing.T) {
 	r := &DoltInstanceReconciler{Client: c, Scheme: s}
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "my-dolt", Namespace: "default"}}
 
-	// First reconcile: creates StatefulSet, Services, ConfigMap; waits for pod.
+	// First reconcile: adds cleanup finalizer and requeues.
+	r.Reconcile(context.Background(), req) //nolint:errcheck
+
+	// Second reconcile: creates StatefulSet, Services, ConfigMap; waits for pod.
 	result, err := r.Reconcile(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -211,7 +214,10 @@ func TestDoltInstanceReconcile_DDLJobAndCondition(t *testing.T) {
 	r := &DoltInstanceReconciler{Client: c, Scheme: s}
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "my-dolt", Namespace: "default"}}
 
-	// Reconcile: StatefulSet ready → creates DDL init Job.
+	// First reconcile: adds cleanup finalizer and requeues.
+	r.Reconcile(context.Background(), req) //nolint:errcheck
+
+	// Second reconcile: StatefulSet ready → creates DDL init Job.
 	result, err := r.Reconcile(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Reconcile (job creation): %v", err)
@@ -277,6 +283,10 @@ func TestGasTownReconcile_WritesToDolt(t *testing.T) {
 	}
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "my-town"}}
 
+	// First reconcile: adds cleanup finalizer and requeues.
+	r.Reconcile(context.Background(), req) //nolint:errcheck
+
+	// Second reconcile: writes desired_town to Dolt.
 	_, err := r.Reconcile(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -326,6 +336,10 @@ func TestGasTownReconcile_CreatesSurveyorDeployment(t *testing.T) {
 	}
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "my-town"}}
 
+	// First reconcile: adds cleanup finalizer and requeues.
+	r.Reconcile(context.Background(), req) //nolint:errcheck
+
+	// Second reconcile: writes Dolt and creates Surveyor Deployment.
 	_, err := r.Reconcile(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -369,6 +383,10 @@ func TestGasTownReconcile_DoltNotReady(t *testing.T) {
 	r := &GasTownReconciler{Client: c, Scheme: s}
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "my-town"}}
 
+	// First reconcile: adds cleanup finalizer and requeues.
+	r.Reconcile(context.Background(), req) //nolint:errcheck
+
+	// Second reconcile: Dolt not ready → sets condition and requeues.
 	result, err := r.Reconcile(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Reconcile returned unexpected error: %v", err)
@@ -758,4 +776,218 @@ func TestWebhook_DoltInstanceRejectsReplicas2(t *testing.T) {
 	if resp.Allowed {
 		t.Errorf("expected DoltInstance with replicas=2 to be denied, but it was allowed")
 	}
+}
+
+// ── Test case 8: DoltInstance finalizer registration ─────────────────────────
+
+// TestDoltInstanceReconcile_RegistersFinalizer verifies that the first reconcile
+// of a DoltInstance adds the cleanup finalizer.
+func TestDoltInstanceReconcile_RegistersFinalizer(t *testing.T) {
+	s := newScheme(t)
+	di := &gasv1alpha1.DoltInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-dolt", Namespace: "default"},
+		Spec: gasv1alpha1.DoltInstanceSpec{
+			Version:  "v1.42.0",
+			Replicas: 1,
+			Storage:  gasv1alpha1.DoltStorage{Size: resource.MustParse("10Gi")},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(di).
+		WithStatusSubresource(di).Build()
+
+	r := &DoltInstanceReconciler{Client: c, Scheme: s}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "my-dolt", Namespace: "default"}}
+
+	// First reconcile: adds finalizer and requeues.
+	_, err := r.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Reconcile (add finalizer): %v", err)
+	}
+
+	var updated gasv1alpha1.DoltInstance
+	mustGet(t, c, types.NamespacedName{Name: "my-dolt", Namespace: "default"}, &updated)
+	hasFinalizer := false
+	for _, f := range updated.Finalizers {
+		if f == doltInstanceCleanupFinalizer {
+			hasFinalizer = true
+		}
+	}
+	if !hasFinalizer {
+		t.Errorf("expected %q finalizer after first reconcile", doltInstanceCleanupFinalizer)
+	}
+}
+
+// TestDoltInstanceReconcile_DeletionDeletesPVCs verifies that when a
+// DoltInstance has DeletionTimestamp set and the cleanup finalizer, the
+// reconciler deletes orphaned PVCs and removes the finalizer.
+func TestDoltInstanceReconcile_DeletionDeletesPVCs(t *testing.T) {
+	s := newScheme(t)
+	now := metav1.Now()
+	// Create the DoltInstance already in a deleting state with the finalizer.
+	di := &gasv1alpha1.DoltInstance{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "my-dolt",
+			Namespace:         "default",
+			DeletionTimestamp: &now,
+			Finalizers:        []string{doltInstanceCleanupFinalizer},
+		},
+		Spec: gasv1alpha1.DoltInstanceSpec{
+			Version:  "v1.42.0",
+			Replicas: 1,
+			Storage:  gasv1alpha1.DoltStorage{Size: resource.MustParse("10Gi")},
+		},
+	}
+	// Pre-create an orphaned PVC with matching labels.
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "data-my-dolt-0",
+			Namespace: "default",
+			Labels:    doltLabels("my-dolt"),
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: resource.MustParse("10Gi"),
+				},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(di, pvc).
+		WithStatusSubresource(di).Build()
+
+	r := &DoltInstanceReconciler{Client: c, Scheme: s}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "my-dolt", Namespace: "default"}}
+
+	// Reconcile with DeletionTimestamp set → should delete PVCs and remove finalizer.
+	_, err := r.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Reconcile (deletion): %v", err)
+	}
+
+	// PVC should be gone.
+	var pvcCheck corev1.PersistentVolumeClaim
+	err = c.Get(context.Background(), types.NamespacedName{Name: "data-my-dolt-0", Namespace: "default"}, &pvcCheck)
+	if err == nil {
+		t.Errorf("expected PVC to be deleted, but it still exists")
+	}
+
+	// DoltInstance should have no finalizer (or be deleted by fake GC).
+	var diCheck gasv1alpha1.DoltInstance
+	err = c.Get(context.Background(), types.NamespacedName{Name: "my-dolt", Namespace: "default"}, &diCheck)
+	if err == nil {
+		for _, f := range diCheck.Finalizers {
+			if f == doltInstanceCleanupFinalizer {
+				t.Errorf("cleanup finalizer still present after deletion reconcile")
+			}
+		}
+	}
+	// NotFound is also acceptable: fake client auto-deleted the object.
+}
+
+// ── Test case 9: GasTown deletion finalizer removes desired_town from Dolt ────
+
+// TestGasTownReconcile_RegistersFinalizer verifies that the first reconcile
+// of a GasTown adds the cleanup finalizer.
+func TestGasTownReconcile_RegistersFinalizer(t *testing.T) {
+	s := newScheme(t)
+	doltInst := makeReadyDoltInstance("my-dolt", "default")
+	gt := &gasv1alpha1.GasTown{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-town"},
+		Spec: gasv1alpha1.GasTownSpec{
+			Version: "1",
+			Home:    "/opt/gt",
+			DoltRef: gasv1alpha1.NamespacedRef{Name: "my-dolt", Namespace: "default"},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(doltInst, gt).
+		WithStatusSubresource(gt).Build()
+
+	db := newFakeDoltDB()
+	defer db.Close()
+
+	r := &GasTownReconciler{
+		Client:      c,
+		Scheme:      s,
+		ConnectDolt: fakeDoltConnector(db),
+	}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "my-town"}}
+
+	// First reconcile: adds finalizer and requeues.
+	_, err := r.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Reconcile (add finalizer): %v", err)
+	}
+
+	var updated gasv1alpha1.GasTown
+	mustGet(t, c, types.NamespacedName{Name: "my-town"}, &updated)
+	hasFinalizer := false
+	for _, f := range updated.Finalizers {
+		if f == gasTownCleanupFinalizer {
+			hasFinalizer = true
+		}
+	}
+	if !hasFinalizer {
+		t.Errorf("expected %q finalizer after first reconcile", gasTownCleanupFinalizer)
+	}
+}
+
+// TestGasTownReconcile_DeletionRemovesDoltRow verifies that when a GasTown has
+// DeletionTimestamp set and the cleanup finalizer, the reconciler calls Dolt to
+// delete the desired_town row and removes the finalizer.
+func TestGasTownReconcile_DeletionRemovesDoltRow(t *testing.T) {
+	s := newScheme(t)
+	doltInst := makeReadyDoltInstance("my-dolt", "default")
+	now := metav1.Now()
+	// Create the GasTown already in a deleting state with the finalizer.
+	gt := &gasv1alpha1.GasTown{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "my-town",
+			DeletionTimestamp: &now,
+			Finalizers:        []string{gasTownCleanupFinalizer},
+		},
+		Spec: gasv1alpha1.GasTownSpec{
+			Version: "1",
+			Home:    "/opt/gt",
+			DoltRef: gasv1alpha1.NamespacedRef{Name: "my-dolt", Namespace: "default"},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(doltInst, gt).
+		WithStatusSubresource(gt).Build()
+
+	db := newFakeDoltDB()
+	defer db.Close()
+
+	doltCalled := false
+	r := &GasTownReconciler{
+		Client: c,
+		Scheme: s,
+		ConnectDolt: func(ctx context.Context, k client.Client, ref gasv1alpha1.NamespacedRef) (*doltClient, error) {
+			doltCalled = true
+			return &doltClient{db: db}, nil
+		},
+	}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "my-town"}}
+
+	// Reconcile with DeletionTimestamp set → should call Dolt and remove finalizer.
+	_, err := r.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Reconcile (deletion): %v", err)
+	}
+
+	if !doltCalled {
+		t.Errorf("expected Dolt to be called during GasTown deletion")
+	}
+
+	// GasTown should have no finalizer (or be deleted by fake GC).
+	var gtCheck gasv1alpha1.GasTown
+	err = c.Get(context.Background(), types.NamespacedName{Name: "my-town"}, &gtCheck)
+	if err == nil {
+		for _, f := range gtCheck.Finalizers {
+			if f == gasTownCleanupFinalizer {
+				t.Errorf("cleanup finalizer still present after deletion reconcile")
+			}
+		}
+	}
+	// NotFound is also acceptable: fake client auto-deleted the object.
 }
