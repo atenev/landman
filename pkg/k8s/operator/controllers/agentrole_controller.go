@@ -436,14 +436,3 @@ func (r *AgentRoleReconciler) emitEvent(
 		"agentrole", types.NamespacedName{Name: ar.Name, Namespace: ar.Namespace})
 }
 
-// timeEqual returns true when both metav1.Time pointers represent the same instant
-// (or are both nil).
-func timeEqual(a, b *metav1.Time) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return a.Time.Equal(b.Time)
-}
