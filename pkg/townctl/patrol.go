@@ -33,6 +33,20 @@ func (r PatrolRow) PctUsed() float64 {
 // PatrolAction is the action Deacon should take for one rig.
 type PatrolAction int
 
+// String implements fmt.Stringer for readable log output.
+func (a PatrolAction) String() string {
+	switch a {
+	case PatrolNone:
+		return "none"
+	case PatrolWarn:
+		return "warn"
+	case PatrolDrain:
+		return "drain"
+	default:
+		return fmt.Sprintf("PatrolAction(%d)", int(a))
+	}
+}
+
 const (
 	// PatrolNone means the rig is within budget — no Bead filed.
 	PatrolNone PatrolAction = iota

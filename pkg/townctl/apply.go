@@ -98,17 +98,17 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 	if len(m.Includes) > 0 {
 		included, err := ResolveIncludes(manifestDir, m.Includes)
 		if err != nil {
-			return err
+			return fmt.Errorf("includes: %w", err)
 		}
 		if err := MergeIncludes(m, included); err != nil {
-			return err
+			return fmt.Errorf("merge includes: %w", err)
 		}
 	}
 
 	// Step 4 — Apply --env overlay.
 	if opts.Env != "" {
 		if err := ApplyEnvOverlay(m, manifestDir, opts.Env); err != nil {
-			return err
+			return fmt.Errorf("env overlay: %w", err)
 		}
 	}
 
