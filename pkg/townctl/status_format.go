@@ -179,6 +179,18 @@ func FormatStatusJSON(r *StatusResult) ([]byte, error) {
 	return json.Marshal(r)
 }
 
+// StatusExitCode returns the recommended process exit code for a status command:
+//   - 0: all rigs are fully converged (every rig score == 1.0, or no rigs)
+//   - 2: at least one rig has a score < 1.0
+func StatusExitCode(r *StatusResult) int {
+	for _, rig := range r.Rigs {
+		if rig.Score < 1.0 {
+			return 2
+		}
+	}
+	return 0
+}
+
 // truncate returns s truncated to maxLen characters; last char replaced with
 // '…' when truncation occurs.
 func truncate(s string, maxLen int) string {

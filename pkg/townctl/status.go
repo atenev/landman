@@ -90,22 +90,27 @@ func Status(dsn string, opts StatusOptions) (*StatusResult, error) {
 	}
 	defer db.Close()
 
-	now := time.Now()
+	return statusFromDB(ctx, db.DB, opts, time.Now())
+}
 
+// statusFromDB implements the core Status logic against an already-open *sql.DB.
+// now is the reference timestamp for staleness calculations; pass time.Now() in
+// production and a fixed value in tests.
+func statusFromDB(ctx context.Context, db *sql.DB, opts StatusOptions, now time.Time) (*StatusResult, error) {
 	// Read desired topology.
-	desiredRigs, err := readDesiredRigs(ctx, db.DB)
+	desiredRigs, err := readDesiredRigs(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("status: read desired_rigs: %w", err)
 	}
-	desiredAgentRoles, err := readDesiredAgentRoles(ctx, db.DB)
+	desiredAgentRoles, err := readDesiredAgentRoles(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("status: read desired_agent_config: %w", err)
 	}
-	desiredCustomRoles, err := readDesiredCustomRoles(ctx, db.DB)
+	desiredCustomRoles, err := readDesiredCustomRoles(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("status: read desired_custom_roles: %w", err)
 	}
-	desiredFormulas, err := readDesiredFormulas(ctx, db.DB)
+	desiredFormulas, err := readDesiredFormulas(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("status: read desired_formulas: %w", err)
 	}
@@ -144,19 +149,19 @@ func Status(dsn string, opts StatusOptions) (*StatusResult, error) {
 	}
 
 	// Read actual topology.
-	actualRigs, err := readActualRigs(ctx, db.DB)
+	actualRigs, err := readActualRigs(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("status: read actual_rigs: %w", err)
 	}
-	actualAgents, err := readActualAgents(ctx, db.DB)
+	actualAgents, err := readActualAgents(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("status: read actual_agent_config: %w", err)
 	}
-	actualWorktrees, err := readActualWorktrees(ctx, db.DB)
+	actualWorktrees, err := readActualWorktrees(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("status: read actual_worktrees: %w", err)
 	}
-	actualCustomRoles, err := readActualCustomRoles(ctx, db.DB)
+	actualCustomRoles, err := readActualCustomRoles(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("status: read actual_custom_roles: %w", err)
 	}
@@ -169,7 +174,7 @@ func Status(dsn string, opts StatusOptions) (*StatusResult, error) {
 	}
 
 	// Read town name from actual_town.
-	townName, err := readTownName(ctx, db.DB)
+	townName, err := readTownName(ctx, db)
 	if err != nil {
 		// Non-fatal: use empty string.
 		townName = ""
@@ -284,14 +289,14 @@ func Status(dsn string, opts StatusOptions) (*StatusResult, error) {
 	}
 
 	// Read open Beads summary.
-	beadsSummary, err := readOpenBeads(ctx, db.DB, now)
+	beadsSummary, err := readOpenBeads(ctx, db, now)
 	if err != nil {
 		// Non-fatal: return empty slice.
 		beadsSummary = nil
 	}
 
 	// Read cost data.
-	costResults, err := readCostData(ctx, db.DB)
+	costResults, err := readCostData(ctx, db)
 	if err != nil {
 		// Non-fatal: return empty slice.
 		costResults = nil
