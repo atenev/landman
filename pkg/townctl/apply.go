@@ -141,7 +141,12 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 	// Step 10 — Ensure agent processes are running.
 	if m.Town.Agents.Surveyor {
 		gtHome := m.Town.Home
-		if err := EnsureSurveyor(gtHome, manifestDir); err != nil {
+		tuning := SurveyorTuning{
+			ConvergenceThreshold:  m.Town.Agents.SurveyorConvergenceThreshold,
+			MaxRetries:            m.Town.Agents.SurveyorRetryCount,
+			PatrolIntervalSeconds: m.Town.Cost.PatrolIntervalSeconds,
+		}
+		if err := EnsureSurveyor(gtHome, manifestDir, tuning); err != nil {
 			// Non-fatal: log a warning but do not fail the apply. The Surveyor
 			// can be started manually or via systemd if auto-launch fails.
 			fmt.Fprintf(os.Stderr, "town-ctl: WARNING: %s\n", err)

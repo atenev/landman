@@ -505,7 +505,7 @@ func readCurrentCustomRoles(ctx context.Context, db *sql.DB) ([]townctl.CustomRo
 	const q = `SELECT name, COALESCE(description,''), scope, lifespan,
 		trigger_type, COALESCE(trigger_schedule,''), COALESCE(trigger_event,''),
 		claude_md_path, COALESCE(model,''), parent_role,
-		COALESCE(reports_to,''), max_instances
+		COALESCE(reports_to,''), max_instances, COALESCE(extends_role,'')
 		FROM desired_custom_roles`
 	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
@@ -520,7 +520,7 @@ func readCurrentCustomRoles(ctx context.Context, db *sql.DB) ([]townctl.CustomRo
 			&r.Name, &r.Description, &r.Scope, &r.Lifespan,
 			&r.TriggerType, &r.TriggerSchedule, &r.TriggerEvent,
 			&r.ClaudeMDPath, &r.Model, &r.ParentRole,
-			&r.ReportsTo, &r.MaxInstances,
+			&r.ReportsTo, &r.MaxInstances, &r.ExtendsRole,
 		); err != nil {
 			return nil, err
 		}
