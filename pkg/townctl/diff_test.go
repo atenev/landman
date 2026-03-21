@@ -209,6 +209,104 @@ scope = "rig"
 	}
 }
 
+// ─── Regression: mayorModel per-rig override (dgt-307) ───────────────────────
+
+// findMayorModelArg returns the model arg for the (rigName, role="mayor") row
+// in the desired_agent_config upsert statements. Returns "" if not found or nil.
+func findMayorModelArg(stmts []townctl.Stmt, rigName string) string {
+	for _, s := range stmts {
+		if !strings.Contains(s.Query, "INSERT INTO desired_agent_config") {
+			continue
+		}
+		// Args order: rig_name, role, enabled, model, max_polecats, claude_md_path
+		if len(s.Args) < 4 {
+			continue
+		}
+		if s.Args[0] == rigName && s.Args[1] == "mayor" {
+			if m, ok := s.Args[3].(string); ok {
+				return m
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+// TestTopologyApplySQL_MayorModelPerRigOverride is a regression test for dgt-307:
+// a per-rig rig.agents.mayor_model must not be overwritten by defaults.mayor_model.
+func TestTopologyApplySQL_MayorModelPerRigOverride(t *testing.T) {
+	const toml = `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+[defaults]
+mayor_model = "claude-opus-4-6"
+
+[[rig]]
+name   = "override-rig"
+repo   = "/srv/override"
+branch = "main"
+
+  [rig.agents]
+  mayor       = true
+  mayor_model = "claude-opus-4-5"
+
+[[rig]]
+name   = "default-rig"
+repo   = "/srv/default"
+branch = "main"
+
+  [rig.agents]
+  mayor = true
+`
+	m := mustParse(t, toml)
+	stmts := townctl.TopologyApplySQL(m)
+
+	overrideModel := findMayorModelArg(stmts, "override-rig")
+	if overrideModel != "claude-opus-4-5" {
+		t.Errorf("override-rig mayor model = %q, want %q (per-rig override ignored)",
+			overrideModel, "claude-opus-4-5")
+	}
+
+	defaultModel := findMayorModelArg(stmts, "default-rig")
+	if defaultModel != "claude-opus-4-6" {
+		t.Errorf("default-rig mayor model = %q, want %q (defaults.mayor_model not applied)",
+			defaultModel, "claude-opus-4-6")
+	}
+}
+
+// TestTopologyApplySQL_MayorModelFallsBackToHardcodedDefault verifies that when
+// no per-rig and no defaults.mayor_model is set, the hardcoded fallback
+// "claude-opus-4-6" is used.
+func TestTopologyApplySQL_MayorModelFallsBackToHardcodedDefault(t *testing.T) {
+	const toml = `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+
+[[rig]]
+name   = "r"
+repo   = "/srv/r"
+branch = "main"
+
+  [rig.agents]
+  mayor = true
+`
+	m := mustParse(t, toml)
+	stmts := townctl.TopologyApplySQL(m)
+
+	model := findMayorModelArg(stmts, "r")
+	if model != "claude-opus-4-6" {
+		t.Errorf("mayor model with no overrides = %q, want hardcoded fallback %q",
+			model, "claude-opus-4-6")
+	}
+}
+
 // ─── FormatTopologyDryRun ─────────────────────────────────────────────────────
 
 func TestFormatTopologyDryRun_NoOps(t *testing.T) {
