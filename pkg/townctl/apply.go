@@ -9,6 +9,7 @@ package townctl
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -19,8 +20,10 @@ import (
 
 // ApplyOptions configures a single town-ctl apply run.
 type ApplyOptions struct {
-	// DryRun prints the planned changes to stdout without writing to Dolt.
+	// DryRun prints the planned changes without writing to Dolt.
 	DryRun bool
+	// Output is the writer for dry-run plan output. Defaults to os.Stdout when nil.
+	Output io.Writer
 	// Env, when non-empty, loads town.<Env>.toml from the manifest directory
 	// as an overlay (applied last, overrides all other values).
 	Env string
@@ -173,7 +176,11 @@ func Apply(manifestPath string, opts ApplyOptions) (retErr error) {
 
 	// Step 6 — (Dry-run: skip Dolt connection)
 	if opts.DryRun {
-		return printDryRun(m, manifestPath)
+		out := opts.Output
+		if out == nil {
+			out = os.Stdout
+		}
+		return printDryRun(out, m, manifestPath)
 	}
 
 	// Step 6 — Connect to Dolt. Bound the initial ping to 10 s to prevent
@@ -347,11 +354,11 @@ func sqlFirstToken(s string) string {
 	return s
 }
 
-// printDryRun computes and prints the planned topology changes to stdout.
+// printDryRun computes and prints the planned topology changes to w.
 // No Dolt connection is made. Exit code is 0 (success) even when changes exist.
-func printDryRun(m *manifest.TownManifest, manifestPath string) error {
-	fmt.Printf("town-ctl dry-run: %s\n", manifestPath)
-	fmt.Printf("rigs: %d  roles: %d\n\n", len(m.Rigs), len(m.Roles))
+func printDryRun(w io.Writer, m *manifest.TownManifest, manifestPath string) error {
+	fmt.Fprintf(w, "town-ctl dry-run: %s\n", manifestPath)
+	fmt.Fprintf(w, "rigs: %d  roles: %d\n\n", len(m.Rigs), len(m.Roles))
 
 	// For --dry-run without a Dolt connection we treat every desired resource
 	// as an "add" (no current state to diff against).
@@ -363,13 +370,13 @@ func printDryRun(m *manifest.TownManifest, manifestPath string) error {
 			Key:    fmt.Sprintf("name=%s repo=%s branch=%s enabled=%t", rig.Name, rig.Repo, rig.Branch, rig.Enabled),
 		})
 	}
-	fmt.Print(FormatTopologyDryRun(topoOps))
+	fmt.Fprint(w, FormatTopologyDryRun(topoOps))
 
 	// Custom roles dry-run uses the structured diff formatter.
 	customDiff := DiffCustomRoles(m, nil, nil)
-	fmt.Print(FormatCustomRolesDryRun(customDiff))
+	fmt.Fprint(w, FormatCustomRolesDryRun(customDiff))
 
 	costOps := DryRunPlan(m, nil)
-	fmt.Print(FormatDryRun(costOps))
+	fmt.Fprint(w, FormatDryRun(costOps))
 	return nil
 }

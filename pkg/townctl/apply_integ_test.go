@@ -20,7 +20,6 @@ package townctl_test
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -112,27 +111,6 @@ roles = ["reviewer"]
 	return path
 }
 
-// captureStdout redirects os.Stdout for the duration of fn and returns the
-// bytes written. Must not be called concurrently with other stdout users.
-func captureStdout(t *testing.T, fn func()) string {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("captureStdout: os.Pipe: %v", err)
-	}
-	old := os.Stdout
-	os.Stdout = w
-	fn()
-	w.Close()
-	os.Stdout = old
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil {
-		t.Fatalf("captureStdout: io.Copy: %v", err)
-	}
-	r.Close()
-	return buf.String()
-}
-
 // ── dry-run tests (no Dolt) ───────────────────────────────────────────────────
 
 // TestApplyDryRun_ExitCodeZero verifies that Apply with DryRun=true returns a
@@ -152,7 +130,8 @@ func TestApplyDryRun_ExitCodeZero(t *testing.T) {
 }
 
 // TestApplyDryRun_PrintsCustomRolesDiff verifies that --dry-run prints a
-// structured diff for [[role]] definitions to stdout (+/~/- prefix convention).
+// structured diff for [[role]] definitions to the configured output writer
+// (+/~/- prefix convention).
 func TestApplyDryRun_PrintsCustomRolesDiff(t *testing.T) {
 	dir := t.TempDir()
 	claudePath := filepath.Join(dir, "CLAUDE.md")
@@ -161,11 +140,11 @@ func TestApplyDryRun_PrintsCustomRolesDiff(t *testing.T) {
 	}
 	manifestPath := writeTempManifest(t, dir, true, claudePath)
 
-	out := captureStdout(t, func() {
-		if err := townctl.Apply(manifestPath, townctl.ApplyOptions{DryRun: true}); err != nil {
-			t.Errorf("Apply(DryRun=true): %v", err)
-		}
-	})
+	var buf bytes.Buffer
+	if err := townctl.Apply(manifestPath, townctl.ApplyOptions{DryRun: true, Output: &buf}); err != nil {
+		t.Errorf("Apply(DryRun=true): %v", err)
+	}
+	out := buf.String()
 
 	// The dry-run formatter uses "+ desired_custom_roles: ..." for add ops.
 	if !strings.Contains(out, "+ desired_custom_roles") {
@@ -203,11 +182,11 @@ func TestApplyDryRun_NoRoles_PrintsNoChanges(t *testing.T) {
 	dir := t.TempDir()
 	manifestPath := writeTempManifest(t, dir, false, "")
 
-	out := captureStdout(t, func() {
-		if err := townctl.Apply(manifestPath, townctl.ApplyOptions{DryRun: true}); err != nil {
-			t.Errorf("Apply(DryRun=true, no roles): %v", err)
-		}
-	})
+	var buf bytes.Buffer
+	if err := townctl.Apply(manifestPath, townctl.ApplyOptions{DryRun: true, Output: &buf}); err != nil {
+		t.Errorf("Apply(DryRun=true, no roles): %v", err)
+	}
+	out := buf.String()
 
 	if !strings.Contains(out, "no changes") {
 		t.Errorf("expected 'no changes' in output for manifest with no roles; got:\n%s", out)
@@ -225,9 +204,9 @@ func TestApplyDryRun_RigOptIn_PrintsJunctionAdd(t *testing.T) {
 	// writeTempManifest with roles=true already adds a rig opt-in for "reviewer".
 	manifestPath := writeTempManifest(t, dir, true, claudePath)
 
-	out := captureStdout(t, func() {
-		_ = townctl.Apply(manifestPath, townctl.ApplyOptions{DryRun: true})
-	})
+	var buf bytes.Buffer
+	_ = townctl.Apply(manifestPath, townctl.ApplyOptions{DryRun: true, Output: &buf})
+	out := buf.String()
 
 	if !strings.Contains(out, "+ desired_rig_custom_roles") {
 		t.Errorf("expected '+ desired_rig_custom_roles' in dry-run output; got:\n%s", out)

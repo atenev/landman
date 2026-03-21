@@ -79,8 +79,38 @@ func TestAgentRoleValidator(t *testing.T) {
 			wantAllow:  false,
 		},
 		{
+			name:       "reserved name polecat",
+			ar:         makeAgentRole("polecat", "witness", "bead_assigned", "", ""),
+			wantStatus: http.StatusForbidden,
+			wantAllow:  false,
+		},
+		{
+			name:       "reserved name witness",
+			ar:         makeAgentRole("witness", "witness", "bead_assigned", "", ""),
+			wantStatus: http.StatusForbidden,
+			wantAllow:  false,
+		},
+		{
+			name:       "reserved name refinery",
+			ar:         makeAgentRole("refinery", "witness", "bead_assigned", "", ""),
+			wantStatus: http.StatusForbidden,
+			wantAllow:  false,
+		},
+		{
 			name:       "reserved name deacon",
 			ar:         makeAgentRole("deacon", "witness", "bead_assigned", "", ""),
+			wantStatus: http.StatusForbidden,
+			wantAllow:  false,
+		},
+		{
+			name:       "reserved name dog",
+			ar:         makeAgentRole("dog", "witness", "bead_assigned", "", ""),
+			wantStatus: http.StatusForbidden,
+			wantAllow:  false,
+		},
+		{
+			name:       "reserved name crew",
+			ar:         makeAgentRole("crew", "witness", "bead_assigned", "", ""),
 			wantStatus: http.StatusForbidden,
 			wantAllow:  false,
 		},
@@ -108,6 +138,12 @@ func TestAgentRoleValidator(t *testing.T) {
 			wantAllow: true,
 		},
 		{
+			name:       "invalid cron expression",
+			ar:         makeAgentRole("analyst", "witness", "schedule", "not-a-cron", ""),
+			wantStatus: http.StatusForbidden,
+			wantAllow:  false,
+		},
+		{
 			name:       "event type without event",
 			ar:         makeAgentRole("analyst", "witness", "event", "", ""),
 			wantStatus: http.StatusForbidden,
@@ -131,6 +167,13 @@ func TestAgentRoleValidator(t *testing.T) {
 			resp := v.Handle(context.Background(), req)
 			if resp.Allowed != tc.wantAllow {
 				t.Errorf("Allowed=%v want %v; result=%+v", resp.Allowed, tc.wantAllow, resp.Result)
+			}
+			if tc.wantStatus != 0 {
+				if resp.Result == nil {
+					t.Errorf("Result is nil; want Status=%d", tc.wantStatus)
+				} else if resp.Result.Code != tc.wantStatus {
+					t.Errorf("Result.Code=%d want %d", resp.Result.Code, tc.wantStatus)
+				}
 			}
 		})
 	}
