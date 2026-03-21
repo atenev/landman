@@ -1,5 +1,7 @@
 # Spec: AlertManager PrometheusRule
 
+**Architecture decision**: [ADR-0012](../../../../docs/adr/0012-observability-presentation-layer.md) (D4: PrometheusRule CRD in chart)
+
 ## Purpose
 
 Six alert rules shipped as a `PrometheusRule` CRD in the Helm chart. They cover the
@@ -186,4 +188,4 @@ prometheusRule:
 - Routing configuration (Slack, PagerDuty, email) — operator responsibility
 - Inhibition rules (e.g. suppress rig alerts when fleet alert is firing)
 - Recording rules / precomputed aggregations — deferred
-- Grafana alert rules (AlertManager is the single alerting source per ADR-0012 D4)
+- Grafana alert rules (AlertManager is the single alerting source per [ADR-0012 D4](../../../../docs/adr/0012-observability-presentation-layer.md))

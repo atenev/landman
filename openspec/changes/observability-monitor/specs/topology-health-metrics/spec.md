@@ -1,5 +1,7 @@
 # Spec: Topology Health Metrics
 
+**Architecture decision**: [ADR-0011](../../../../docs/adr/0011-observability-architecture.md) (D2: Dolt as metrics source, D4: cardinality constraints, D6: ComputeScore ownership)
+
 ## Purpose
 
 Expose fleet health as Prometheus metrics by reading `desired_topology` and

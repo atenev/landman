@@ -1,9 +1,9 @@
 # ADR-0012: Observability Presentation Layer
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-03-21
-- **Depends on**: ADR-0011 (metrics collection architecture)
-- **Beads issue**: TBD (see observability-monitor change)
+- **Depends on**: [ADR-0011](0011-observability-architecture.md) (metrics collection architecture)
+- **Beads issue**: dgt-ufz (ADR task), dgt-47l (observability-monitor epic)
 
 ## Context
 

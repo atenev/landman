@@ -1,8 +1,8 @@
 # ADR-0011: Observability Architecture for the DGT Control Plane
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-03-21
-- **Beads issue**: TBD (see observability-monitor change)
+- **Beads issue**: dgt-ytz (ADR task), dgt-47l (observability-monitor epic)
 
 ## Context
 

@@ -1,5 +1,7 @@
 # Spec: CRD Status Enrichment
 
+**Architecture decision**: [ADR-0012](../../../../docs/adr/0012-observability-presentation-layer.md) (D2: updated by existing status-sync loop)
+
 ## Purpose
 
 Enrich `GasTownStatus` with convergence data so that `kubectl describe gastown` and
@@ -122,5 +124,5 @@ These are set inside `patchStatusFromActual` using the existing `r.setCondition`
 ## Non-Goals
 
 - Per-rig status in `GasTownStatus` — Rig CRs already have their own status
-- Real-time updates (30s lag is acceptable per ADR-0012 D2)
+- Real-time updates (30s lag is acceptable per [ADR-0012 D2](../../../../docs/adr/0012-observability-presentation-layer.md))
 - Writing convergence score back to Dolt

@@ -1,5 +1,7 @@
 # Spec: Grafana Dashboard
 
+**Architecture decision**: [ADR-0012](../../../../docs/adr/0012-observability-presentation-layer.md) (D3: versioned JSON in chart)
+
 ## Purpose
 
 A single versioned Grafana dashboard that gives platform operators a unified view

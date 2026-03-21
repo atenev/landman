@@ -1,5 +1,7 @@
 # Spec: Beads Workflow Metrics
 
+**Architecture decision**: [ADR-0011](../../../../docs/adr/0011-observability-architecture.md) (D3: Beads state read from Dolt, D4: cardinality constraints)
+
 ## Purpose
 
 The Beads coordination layer is the execution backbone of the dgt control plane:

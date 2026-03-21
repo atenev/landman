@@ -5,7 +5,7 @@ drives fleet convergence — emits no metrics. `actual_topology` in Dolt capture
 fleet state but nothing aggregates it. Cost patrol effectiveness, Bead workflow timing,
 and convergence scores are all invisible until something breaks.
 
-ADR-0011 specifies the observability architecture. This design document details the
+[ADR-0011](../../../docs/adr/0011-observability-architecture.md) specifies the observability architecture. This design document details the
 implementation of the `observability-monitor` change.
 
 Depends on: `surveyor-topology-reconciler` (actual_topology tables must exist).

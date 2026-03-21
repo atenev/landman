@@ -1,5 +1,7 @@
 # Spec: Inline Reconciler Metrics
 
+**Architecture decision**: [ADR-0011](../../../../docs/adr/0011-observability-architecture.md) (D1: inline pkg/surveyor metrics are fine, D4: cardinality constraints)
+
 ## Purpose
 
 Add Prometheus instrumentation directly to the Go libraries used by the Surveyor

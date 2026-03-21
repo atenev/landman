@@ -19,7 +19,7 @@ The result: a system that is correct in design, blind in operation.
 
 ## What Changes
 
-**Collection layer** (ADR-0011):
+**Collection layer** ([ADR-0011](../../../docs/adr/0011-observability-architecture.md)):
 - New `cmd/dgt-observer` binary: a standalone Go service (not an agent) that runs
   alongside the operator or `town-ctl`. Polls Dolt at a configurable interval, reads
   `actual_topology` + `desired_topology` + Beads state, and exposes a Prometheus `/metrics`
@@ -31,7 +31,7 @@ The result: a system that is correct in design, blind in operation.
 - Inline metrics additions to `pkg/townctl`: cost patrol run counter, action counters
   (warn/drain) by rig, budget type, ledger write latency.
 
-**Presentation layer** (ADR-0012):
+**Presentation layer** ([ADR-0012](../../../docs/adr/0012-observability-presentation-layer.md)):
 - New `town-ctl status` subcommand: point-in-time fleet health summary rendered as a
   terminal table or JSON. Reads Dolt directly — no Prometheus required.
 - CRD status enrichment: `ConvergenceScore`, `NonConverged`, and `LastConvergenceAt`

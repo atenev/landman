@@ -1,5 +1,7 @@
 # Spec: town-ctl status Command
 
+**Architecture decision**: [ADR-0012](../../../../docs/adr/0012-observability-presentation-layer.md) (D1: reads Dolt directly, D5: output formats)
+
 ## Purpose
 
 A new `town-ctl status` subcommand that gives an operator an immediate, readable

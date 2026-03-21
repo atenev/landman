@@ -1,5 +1,7 @@
 # Spec: dgt-observer Binary
 
+**Architecture decision**: [ADR-0011](../../../../docs/adr/0011-observability-architecture.md) (D1: separate binary, D5: K8s deployment model, D6: ComputeScore ownership)
+
 ## Purpose
 
 `dgt-observer` is a read-only Go binary that runs alongside the operator or `town-ctl`.
