@@ -107,7 +107,7 @@ func resolveAgentConfigRows(m *manifest.TownManifest) ([]agentConfigRow, []agent
 	keys := make([]agentConfigKey, 0, len(m.Rigs)*5)
 
 	for _, rig := range m.Rigs {
-		mayorModel := ""
+		mayorModel := rig.Agents.MayorModel
 		if mayorModel == "" {
 			mayorModel = defaultMayorModel
 		}

@@ -99,6 +99,13 @@ func (v *AgentRoleValidator) Handle(ctx context.Context, req admission.Request) 
 			return admission.Denied(
 				"spec.trigger.event: required when spec.trigger.type is 'event'")
 		}
+	case "bead_assigned", "manual":
+		// valid trigger types; no additional field validation required.
+	default:
+		return admission.Denied(fmt.Sprintf(
+			"spec.trigger.type: %q is not a recognized trigger type; "+
+				"must be one of: bead_assigned, schedule, event, manual",
+			ar.Spec.Trigger.Type))
 	}
 
 	return admission.Allowed("")

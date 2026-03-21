@@ -140,6 +140,9 @@ type AgentConfig struct {
 	// MaxPolecats overrides [defaults].max_polecats for this rig.
 	MaxPolecats int `toml:"max_polecats" json:"max_polecats,omitempty" validate:"omitempty,min=1,lte=30"`
 
+	// MayorModel overrides [defaults].mayor_model for this rig.
+	MayorModel string `toml:"mayor_model" json:"mayor_model,omitempty"`
+
 	// PolekatModel overrides [defaults].polecat_model for this rig.
 	PolekatModel string `toml:"polecat_model" json:"polecat_model,omitempty"`
 
