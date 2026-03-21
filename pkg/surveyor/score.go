@@ -138,6 +138,15 @@ type DesiredCustomRole struct {
 	InstanceIndex int
 }
 
+// DesiredTopology groups all desired-state slices passed to ComputeScore.
+// Adding a new resource type only requires extending this struct rather than
+// changing the ComputeScore signature.
+type DesiredTopology struct {
+	Rigs        []DesiredRig
+	CustomRoles []DesiredCustomRole
+	Formulas    []DesiredFormula
+}
+
 // ActualTopology is the full snapshot of actual_topology tables read from
 // Dolt `main` during the verify loop.
 type ActualTopology struct {
@@ -173,9 +182,7 @@ type ScoreResult struct {
 // now is the reference time for staleness checks. Pass time.Now() in production
 // code; pass a fixed value in tests.
 func ComputeScore(
-	desired []DesiredRig,
-	desiredCustomRoles []DesiredCustomRole,
-	desiredFormulas []DesiredFormula,
+	desired DesiredTopology,
 	actual ActualTopology,
 	cfg VerifyConfig,
 	now time.Time,
@@ -211,7 +218,7 @@ func ComputeScore(
 	}
 
 	// Score each desired rig.
-	for _, dr := range desired {
+	for _, dr := range desired.Rigs {
 		res.RigTotal++
 		rigPass := scoreRig(dr, actualRigByName, actualAgentsByRig, cfg.StaleTTL, now)
 		if rigPass {
@@ -235,7 +242,7 @@ func ComputeScore(
 	}
 
 	// Score each desired custom role.
-	for _, dcr := range desiredCustomRoles {
+	for _, dcr := range desired.CustomRoles {
 		k := actualCustomRoleKey(rigNameForRole(dcr), dcr.Name, dcr.InstanceIndex)
 		actual, exists := actualCustomRoleMap[k]
 		if dcr.Scope == "town" {
@@ -260,7 +267,7 @@ func ComputeScore(
 	// Score each desired formula: converged when the formula's rig is running
 	// (Mayor healthy and rig status=running within StaleTTL). This is the
 	// schedule-entry-existence proxy until actual_formulas is available.
-	for _, df := range desiredFormulas {
+	for _, df := range desired.Formulas {
 		res.FormulaTotal++
 		if scoreRig(
 			DesiredRig{Name: df.RigName, Enabled: true},

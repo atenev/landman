@@ -49,7 +49,7 @@ func TestRetryDelay_BackoffSequenceMatches_ADR0009_Example(t *testing.T) {
 
 func TestComputeScore_NoDesiredResources_ScoreIsOne(t *testing.T) {
 	cfg := surveyor.DefaultProductionConfig()
-	result := surveyor.ComputeScore(nil, nil, nil, surveyor.ActualTopology{}, cfg, time.Now())
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{}, surveyor.ActualTopology{}, cfg, time.Now())
 	if result.Score != 1.0 {
 		t.Errorf("empty desired: score = %.3f, want 1.0", result.Score)
 	}
@@ -89,7 +89,7 @@ func TestComputeScore_SingleRig_Converged(t *testing.T) {
 			LastSeen: now.Add(-10 * time.Second),
 		}},
 	}
-	result := surveyor.ComputeScore(desired, nil, nil, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
 	if result.Score != 1.0 {
 		t.Errorf("converged rig: score = %.3f, want 1.0", result.Score)
 	}
@@ -105,7 +105,7 @@ func TestComputeScore_RigMissingFromActual_NotConverged(t *testing.T) {
 	now := time.Now()
 	cfg := surveyor.DefaultProductionConfig()
 	desired := []surveyor.DesiredRig{{Name: "backend", Enabled: true}}
-	result := surveyor.ComputeScore(desired, nil, nil, surveyor.ActualTopology{}, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, surveyor.ActualTopology{}, cfg, now)
 	if result.Score != 0.0 {
 		t.Errorf("absent rig: score = %.3f, want 0.0", result.Score)
 	}
@@ -128,7 +128,7 @@ func TestComputeScore_RigStaleLastSeen_NotConverged(t *testing.T) {
 			LastSeen: now.Add(-10 * time.Second),
 		}},
 	}
-	result := surveyor.ComputeScore(desired, nil, nil, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
 	if result.Score != 0.0 {
 		t.Errorf("stale rig: score = %.3f, want 0.0", result.Score)
 	}
@@ -145,7 +145,7 @@ func TestComputeScore_RigNoMayor_NotConverged(t *testing.T) {
 		}},
 		// No Mayor agent.
 	}
-	result := surveyor.ComputeScore(desired, nil, nil, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
 	if result.Score != 0.0 {
 		t.Errorf("no mayor: score = %.3f, want 0.0", result.Score)
 	}
@@ -161,7 +161,7 @@ func TestComputeScore_DisabledRig_ConvergedWhenStopped(t *testing.T) {
 			LastSeen: now.Add(-5 * time.Second),
 		}},
 	}
-	result := surveyor.ComputeScore(desired, nil, nil, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
 	if result.Score != 1.0 {
 		t.Errorf("disabled rig stopped: score = %.3f, want 1.0", result.Score)
 	}
@@ -177,7 +177,7 @@ func TestComputeScore_DisabledRig_NotConvergedWhenRunning(t *testing.T) {
 			LastSeen: now.Add(-5 * time.Second),
 		}},
 	}
-	result := surveyor.ComputeScore(desired, nil, nil, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
 	if result.Score != 0.0 {
 		t.Errorf("disabled rig still running: score = %.3f, want 0.0", result.Score)
 	}
@@ -206,7 +206,7 @@ func TestComputeScore_PolecatPool_Converged(t *testing.T) {
 			{RigName: "backend", Status: "active"},
 		},
 	}
-	result := surveyor.ComputeScore(desired, nil, nil, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
 	if result.Score != 1.0 {
 		t.Errorf("converged pool: score = %.3f, want 1.0", result.Score)
 	}
@@ -234,7 +234,7 @@ func TestComputeScore_PolecatPool_StaleWorktree_NotConverged(t *testing.T) {
 			{RigName: "backend", Status: "stale"}, // stale worktree
 		},
 	}
-	result := surveyor.ComputeScore(desired, nil, nil, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
 	if result.PoolPass != 0 {
 		t.Errorf("stale worktree: pool should not converge, got pool_pass=%d", result.PoolPass)
 	}
@@ -261,7 +261,7 @@ func TestComputeScore_PolecatPool_ExceedsMax_NotConverged(t *testing.T) {
 			{RigName: "backend", Status: "active"}, // 4 > max 3
 		},
 	}
-	result := surveyor.ComputeScore(desired, nil, nil, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
 	if result.PoolPass != 0 {
 		t.Errorf("over-capacity pool: pool should not converge, got pool_pass=%d", result.PoolPass)
 	}
@@ -289,7 +289,7 @@ func TestComputeScore_TownScopedRole_Converged(t *testing.T) {
 			Status: "running", LastSeen: now.Add(-5 * time.Second),
 		}},
 	}
-	result := surveyor.ComputeScore(desired, desiredRoles, nil, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired, CustomRoles: desiredRoles}, actual, cfg, now)
 	if result.TownRolePass != 1 || result.TownRoleTotal != 1 {
 		t.Errorf("town role: pass=%d total=%d, want 1/1", result.TownRolePass, result.TownRoleTotal)
 	}
@@ -312,7 +312,7 @@ func TestComputeScore_RigScopedRole_NotConverged_WhenAbsent(t *testing.T) {
 		}},
 		// No custom role row.
 	}
-	result := surveyor.ComputeScore(desired, desiredRoles, nil, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired, CustomRoles: desiredRoles}, actual, cfg, now)
 	if result.RigRolePass != 0 {
 		t.Errorf("absent rig role: should not converge, got rig_role_pass=%d", result.RigRolePass)
 	}
@@ -339,7 +339,7 @@ func TestComputeScore_WeightedAverage_PartialConvergence(t *testing.T) {
 			LastSeen: now.Add(-5 * time.Second),
 		}},
 	}
-	result := surveyor.ComputeScore(desired, nil, nil, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
 	if result.Score != 0.5 {
 		t.Errorf("partial convergence: score = %.3f, want 0.5", result.Score)
 	}
@@ -352,7 +352,7 @@ func TestComputeScore_NonConvergedListed(t *testing.T) {
 	now := time.Now()
 	cfg := surveyor.DefaultProductionConfig()
 	desired := []surveyor.DesiredRig{{Name: "backend", Enabled: true}}
-	result := surveyor.ComputeScore(desired, nil, nil, surveyor.ActualTopology{}, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, surveyor.ActualTopology{}, cfg, now)
 	if len(result.NonConverged) == 0 {
 		t.Error("expected non-converged list to be non-empty")
 	}
@@ -581,7 +581,7 @@ func TestComputeScore_Formula_ConvergedWhenRigRunning(t *testing.T) {
 		}},
 	}
 
-	result := surveyor.ComputeScore(desired, nil, formulas, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired, Formulas: formulas}, actual, cfg, now)
 	if result.FormulaTotal != 1 {
 		t.Errorf("FormulaTotal = %d, want 1", result.FormulaTotal)
 	}
@@ -601,7 +601,7 @@ func TestComputeScore_Formula_NotConvergedWhenRigAbsent(t *testing.T) {
 	formulas := []surveyor.DesiredFormula{{RigName: "backend", Name: "nightly-cleanup"}}
 
 	// Actual topology has no rigs — formula's rig is absent.
-	result := surveyor.ComputeScore(desired, nil, formulas, surveyor.ActualTopology{}, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired, Formulas: formulas}, surveyor.ActualTopology{}, cfg, now)
 	if result.FormulaTotal != 1 {
 		t.Errorf("FormulaTotal = %d, want 1", result.FormulaTotal)
 	}
@@ -636,7 +636,7 @@ func TestComputeScore_Formula_NotConvergedWhenRigStale(t *testing.T) {
 		}},
 	}
 
-	result := surveyor.ComputeScore(desired, nil, formulas, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired, Formulas: formulas}, actual, cfg, now)
 	if result.FormulaPass != 0 {
 		t.Errorf("FormulaPass = %d, want 0 (rig stale)", result.FormulaPass)
 	}
@@ -663,7 +663,7 @@ func TestComputeScore_Formula_WeightContributesToScore(t *testing.T) {
 		}},
 	}
 
-	result := surveyor.ComputeScore(desired, nil, formulas, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired, Formulas: formulas}, actual, cfg, now)
 	want := float64(surveyor.WeightRig) / float64(surveyor.WeightRig+surveyor.WeightFormula)
 	if result.Score != want {
 		t.Errorf("score = %.4f, want %.4f", result.Score, want)
@@ -686,7 +686,7 @@ func TestComputeScore_NoFormulas_FormulaCountsZero(t *testing.T) {
 		}},
 	}
 
-	result := surveyor.ComputeScore(desired, nil, nil, actual, cfg, now)
+	result := surveyor.ComputeScore(surveyor.DesiredTopology{Rigs: desired}, actual, cfg, now)
 	if result.FormulaTotal != 0 {
 		t.Errorf("FormulaTotal = %d, want 0 when no formulas desired", result.FormulaTotal)
 	}
