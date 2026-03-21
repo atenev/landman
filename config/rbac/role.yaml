@@ -19,6 +19,7 @@ rules:
       - "agentroles/finalizers"
       - "doltinstances"
       - "doltinstances/status"
+      - "doltinstances/finalizers"
     verbs: ["get", "list", "watch", "create", "update", "patch"]
   # Manage Dolt StatefulSet and Surveyor Deployment.
   - apiGroups: ["apps"]
