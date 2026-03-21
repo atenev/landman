@@ -316,6 +316,7 @@ VALUES (?, ?, true)`
 	var commitHash string
 	row := dolt.db.QueryRowContext(ctx, `SELECT dolt_hashof('HEAD')`)
 	if err := row.Scan(&commitHash); err != nil {
+		log.FromContext(ctx).V(1).Info("dolt_hashof scan failed, commit hash unavailable", "err", err)
 		commitHash = ""
 	}
 	return commitHash, nil
@@ -463,11 +464,13 @@ func (r *RigReconciler) runStatusSync(ctx context.Context) error {
 		}
 	}()
 
+	logger := log.FromContext(ctx).WithName("rig-status-sync")
 	for i := range rigList.Items {
 		rig := &rigList.Items[i]
 
 		var gt gasv1alpha1.GasTown
 		if err := r.Get(ctx, client.ObjectKey{Name: rig.Spec.TownRef}, &gt); err != nil {
+			logger.V(1).Info("get gastown for rig status sync failed", "rig", rig.Name, "townRef", rig.Spec.TownRef, "err", err)
 			continue
 		}
 
@@ -477,6 +480,7 @@ func (r *RigReconciler) runStatusSync(ctx context.Context) error {
 			var err error
 			dolt, err = openDoltConnectionFromSpec(ctx, r.Client, gt.Spec.DoltRef)
 			if err != nil {
+				logger.V(1).Info("connect dolt for rig status sync failed", "rig", rig.Name, "doltRef", gt.Spec.DoltRef.Name, "err", err)
 				continue
 			}
 			conns[key] = dolt
@@ -517,6 +521,9 @@ WHERE rig_name = ? AND role = 'polecat' AND status = 'running'`
 
 	var runningPolecats int32
 	if err := dolt.db.QueryRowContext(ctx, polecatQuery, rig.Name).Scan(&runningPolecats); err != nil {
+		if err != sql.ErrNoRows {
+			log.FromContext(ctx).V(1).Info("query actual_agent_config for polecat count failed", "rig", rig.Name, "err", err)
+		}
 		runningPolecats = 0
 	}
 

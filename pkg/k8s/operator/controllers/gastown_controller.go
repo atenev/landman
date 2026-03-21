@@ -214,6 +214,7 @@ ON DUPLICATE KEY UPDATE
 	var commitHash string
 	row := dolt.db.QueryRowContext(ctx, `SELECT dolt_hashof('HEAD')`)
 	if err := row.Scan(&commitHash); err != nil {
+		log.FromContext(ctx).V(1).Info("dolt_hashof scan failed, commit hash unavailable", "err", err)
 		commitHash = ""
 	}
 	return commitHash, nil
@@ -394,6 +395,7 @@ func (r *GasTownReconciler) runStatusSync(ctx context.Context) error {
 		}
 	}()
 
+	syncLogger := log.FromContext(ctx).WithName("gastown-status-sync")
 	for i := range gtList.Items {
 		gt := &gtList.Items[i]
 		key := connKey{gt.Spec.DoltRef.Name, gt.Spec.DoltRef.Namespace}
@@ -402,6 +404,7 @@ func (r *GasTownReconciler) runStatusSync(ctx context.Context) error {
 			var err error
 			dolt, err = openDoltConnectionFromSpec(ctx, r.Client, gt.Spec.DoltRef)
 			if err != nil {
+				syncLogger.V(1).Info("connect dolt for gastown status sync failed", "gastown", gt.Name, "doltRef", gt.Spec.DoltRef.Name, "err", err)
 				continue
 			}
 			conns[key] = dolt

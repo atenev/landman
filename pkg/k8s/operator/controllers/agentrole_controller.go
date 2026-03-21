@@ -223,6 +223,7 @@ ON DUPLICATE KEY UPDATE
 	row := dolt.db.QueryRowContext(ctx, `SELECT dolt_hashof('HEAD')`)
 	if err := row.Scan(&commitHash); err != nil {
 		// Non-fatal: best-effort commit hash.
+		log.FromContext(ctx).V(1).Info("dolt_hashof scan failed, commit hash unavailable", "err", err)
 		commitHash = ""
 	}
 	return commitHash, nil
