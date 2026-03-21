@@ -8,6 +8,7 @@ package townctl_test
 import (
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -41,6 +42,7 @@ type fakeQueryRow struct {
 // fakeConnCfg configures the fake connection's behaviour for one test.
 type fakeConnCfg struct {
 	queryRow  *fakeQueryRow // nil → ErrNoRows on Scan
+	queryErr  error         // non-nil → Query returns this error (DB-level failure)
 	execErrAt int           // 0-based index of Exec call that should fail; -1 = never
 	execErr   error         // error returned at execErrAt
 	commitErr error         // error returned by Commit
@@ -137,6 +139,9 @@ func (s *fakeStmt) Exec(args []driver.Value) (driver.Result, error) {
 }
 
 func (s *fakeStmt) Query(args []driver.Value) (driver.Rows, error) {
+	if s.conn.cfg.queryErr != nil {
+		return nil, s.conn.cfg.queryErr
+	}
 	if s.conn.cfg.queryRow == nil {
 		return &fakeRows{}, nil
 	}
@@ -216,6 +221,24 @@ func TestCheckTopologyLock_NoRow_ReturnsNil(t *testing.T) {
 	db := newFakeDB(t, &fakeConnCfg{queryRow: nil, execErrAt: -1})
 	if err := townctl.CheckTopologyLock(db, "town-ctl/dev"); err != nil {
 		t.Errorf("expected nil when no lock row, got: %v", err)
+	}
+}
+
+// TestCheckTopologyLock_DBError_ReturnsError verifies that a non-ErrNoRows
+// database error from QueryRow is surfaced as a "topology lock check" error.
+func TestCheckTopologyLock_DBError_ReturnsError(t *testing.T) {
+	sentinel := fmt.Errorf("connection reset by peer")
+	db := newFakeDB(t, &fakeConnCfg{queryErr: sentinel, execErrAt: -1})
+
+	err := townctl.CheckTopologyLock(db, "town-ctl/dev")
+	if err == nil {
+		t.Fatal("expected error for DB query failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "topology lock check") {
+		t.Errorf("error should mention 'topology lock check', got: %v", err)
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("error should wrap the original DB error; got: %v", err)
 	}
 }
 
