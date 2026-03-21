@@ -79,6 +79,37 @@ func ResolveSecrets(m *manifest.TownManifest) error {
 	return nil
 }
 
+// VerifyRequiredSecrets checks that secrets required at runtime are non-empty
+// after resolution. It is called by Apply after ResolveSecrets to catch
+// manifests where a required secret was omitted or resolved to an empty string.
+//
+// Currently enforced:
+//   - secrets.anthropic_api_key must be non-empty when town.agents.surveyor=true,
+//     because the Surveyor calls the Claude API on every reconciliation cycle.
+func VerifyRequiredSecrets(m *manifest.TownManifest) error {
+	if m.Town.Agents.Surveyor && m.Secrets.AnthropicAPIKey == "" {
+		return fmt.Errorf("secrets.anthropic_api_key: empty after resolution — " +
+			"town.agents.surveyor=true requires a non-empty ANTHROPIC_API_KEY " +
+			"(set the env-var or configure a secrets file)")
+	}
+	return nil
+}
+
+// BuildSurveyorEnv returns the environment for a Surveyor child process.
+// It starts from os.Environ() and injects any resolved secrets that are not
+// already present, ensuring secrets sourced from a file (rather than an env-var)
+// are forwarded to the agent.
+func BuildSurveyorEnv(anthropicAPIKey, githubToken string) []string {
+	env := os.Environ()
+	if anthropicAPIKey != "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
+		env = append(env, "ANTHROPIC_API_KEY="+anthropicAPIKey)
+	}
+	if githubToken != "" && os.Getenv("GITHUB_TOKEN") == "" {
+		env = append(env, "GITHUB_TOKEN="+githubToken)
+	}
+	return env
+}
+
 // expandManifest applies fn to every interpolatable string field in m.
 func expandManifest(m *manifest.TownManifest, fn func(*string)) {
 	fn(&m.Town.Home)

@@ -47,13 +47,16 @@ type SurveyorTuning struct {
 // configDir is the directory containing town.toml; it is passed to the Surveyor
 // as its --config argument so it can locate its configuration at startup.
 //
-// Non-zero fields in tuning are forwarded as environment variables so the
-// Surveyor uses the manifest-declared values instead of its compiled-in defaults:
+// baseEnv is the starting environment for the child process (e.g. from
+// BuildSurveyorEnv, which includes os.Environ() plus any file-sourced secrets).
+// When nil, os.Environ() is used as a safe fallback.
+//
+// Non-zero fields in tuning are appended as environment variable overrides:
 //
 //	GT_SURVEYOR_CONVERGENCE_THRESHOLD  — ConvergenceThreshold (float, e.g. "0.95")
 //	GT_SURVEYOR_MAX_RETRIES            — MaxRetries (integer, e.g. "5")
 //	GT_DEACON_PATROL_INTERVAL_SECONDS  — PatrolIntervalSeconds (integer, e.g. "60")
-func EnsureSurveyor(gtHome, configDir string, tuning SurveyorTuning) error {
+func EnsureSurveyor(gtHome, configDir string, tuning SurveyorTuning, baseEnv []string) error {
 	pidFile := filepath.Join(gtHome, "run", "surveyor.pid")
 
 	// Check existing PID file.
@@ -77,25 +80,25 @@ func EnsureSurveyor(gtHome, configDir string, tuning SurveyorTuning) error {
 	cmd.Stderr = nil
 	cmd.Stdin = nil
 
-	// Build env slice with any non-zero tuning overrides appended. Only set
-	// cmd.Env when there are extra vars to add; otherwise cmd inherits
-	// os.Environ() automatically (cmd.Env == nil means inherit).
-	var extraEnv []string
+	// Build the child process env: start from baseEnv (os.Environ() + any
+	// file-sourced secrets injected by BuildSurveyorEnv), then append tuning
+	// overrides. Falls back to os.Environ() when baseEnv is nil.
+	if baseEnv == nil {
+		baseEnv = os.Environ()
+	}
 	if tuning.ConvergenceThreshold != 0 {
-		extraEnv = append(extraEnv,
+		baseEnv = append(baseEnv,
 			fmt.Sprintf("GT_SURVEYOR_CONVERGENCE_THRESHOLD=%g", tuning.ConvergenceThreshold))
 	}
 	if tuning.MaxRetries != 0 {
-		extraEnv = append(extraEnv,
+		baseEnv = append(baseEnv,
 			fmt.Sprintf("GT_SURVEYOR_MAX_RETRIES=%d", tuning.MaxRetries))
 	}
 	if tuning.PatrolIntervalSeconds != 0 {
-		extraEnv = append(extraEnv,
+		baseEnv = append(baseEnv,
 			fmt.Sprintf("GT_DEACON_PATROL_INTERVAL_SECONDS=%d", tuning.PatrolIntervalSeconds))
 	}
-	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
-	}
+	cmd.Env = baseEnv
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("surveyor: launch: %w", err)

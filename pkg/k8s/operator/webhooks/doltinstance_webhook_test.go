@@ -15,6 +15,15 @@ import (
 	"github.com/tenev/dgt/pkg/k8s/operator/webhooks"
 )
 
+func encodeDoltInstance(t *testing.T, di *gasv1alpha1.DoltInstance) runtime.RawExtension {
+	t.Helper()
+	b, err := json.Marshal(di)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return runtime.RawExtension{Raw: b}
+}
+
 func newDoltInstanceValidator(t *testing.T) *webhooks.DoltInstanceValidator {
 	t.Helper()
 	v := &webhooks.DoltInstanceValidator{}
@@ -30,14 +39,19 @@ func newDoltInstanceValidator(t *testing.T) *webhooks.DoltInstanceValidator {
 }
 
 func makeDoltInstance(replicas int32) *gasv1alpha1.DoltInstance {
+	return makeDoltInstanceFull(replicas, "v1.42.0", "", "10Gi")
+}
+
+func makeDoltInstanceFull(replicas int32, version, storageClass, size string) *gasv1alpha1.DoltInstance {
 	return &gasv1alpha1.DoltInstance{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "gastown.tenev.io/v1alpha1", Kind: "DoltInstance"},
 		ObjectMeta: metav1.ObjectMeta{Name: "my-dolt", Namespace: "default"},
 		Spec: gasv1alpha1.DoltInstanceSpec{
-			Version:  "v1.42.0",
+			Version:  version,
 			Replicas: replicas,
 			Storage: gasv1alpha1.DoltStorage{
-				Size: resource.MustParse("10Gi"),
+				StorageClassName: storageClass,
+				Size:             resource.MustParse(size),
 			},
 		},
 	}
@@ -65,6 +79,75 @@ func TestDoltInstanceValidator(t *testing.T) {
 			req := admission.Request{
 				AdmissionRequest: admissionv1.AdmissionRequest{
 					Object: runtime.RawExtension{Raw: raw},
+				},
+			}
+			resp := v.Handle(context.Background(), req)
+			if resp.Allowed != tc.wantAllow {
+				t.Errorf("Allowed=%v want %v; result=%+v", resp.Allowed, tc.wantAllow, resp.Result)
+			}
+		})
+	}
+}
+
+func TestDoltInstanceValidator_ImmutableFields(t *testing.T) {
+	tests := []struct {
+		name      string
+		old       *gasv1alpha1.DoltInstance
+		new       *gasv1alpha1.DoltInstance
+		wantAllow bool
+	}{
+		{
+			name:      "no change allowed",
+			old:       makeDoltInstanceFull(1, "v1.42.0", "standard", "10Gi"),
+			new:       makeDoltInstanceFull(1, "v1.42.0", "standard", "10Gi"),
+			wantAllow: true,
+		},
+		{
+			name:      "version upgrade allowed",
+			old:       makeDoltInstanceFull(1, "v1.42.0", "standard", "10Gi"),
+			new:       makeDoltInstanceFull(1, "v1.43.0", "standard", "10Gi"),
+			wantAllow: true,
+		},
+		{
+			name:      "version downgrade denied",
+			old:       makeDoltInstanceFull(1, "v1.42.0", "standard", "10Gi"),
+			new:       makeDoltInstanceFull(1, "v1.41.0", "standard", "10Gi"),
+			wantAllow: false,
+		},
+		{
+			name:      "major version downgrade denied",
+			old:       makeDoltInstanceFull(1, "v2.0.0", "standard", "10Gi"),
+			new:       makeDoltInstanceFull(1, "v1.99.0", "standard", "10Gi"),
+			wantAllow: false,
+		},
+		{
+			name:      "storageClassName change denied",
+			old:       makeDoltInstanceFull(1, "v1.42.0", "standard", "10Gi"),
+			new:       makeDoltInstanceFull(1, "v1.42.0", "premium-ssd", "10Gi"),
+			wantAllow: false,
+		},
+		{
+			name:      "storage size change denied",
+			old:       makeDoltInstanceFull(1, "v1.42.0", "standard", "10Gi"),
+			new:       makeDoltInstanceFull(1, "v1.42.0", "standard", "20Gi"),
+			wantAllow: false,
+		},
+		{
+			name:      "storage size shrink denied",
+			old:       makeDoltInstanceFull(1, "v1.42.0", "standard", "20Gi"),
+			new:       makeDoltInstanceFull(1, "v1.42.0", "standard", "10Gi"),
+			wantAllow: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newDoltInstanceValidator(t)
+			req := admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Operation: admissionv1.Update,
+					Object:    encodeDoltInstance(t, tc.new),
+					OldObject: encodeDoltInstance(t, tc.old),
 				},
 			}
 			resp := v.Handle(context.Background(), req)

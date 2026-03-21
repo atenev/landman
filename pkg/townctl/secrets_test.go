@@ -3,6 +3,7 @@ package townctl_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tenev/dgt/pkg/manifest"
@@ -115,6 +116,98 @@ func TestResolveSecrets_NoVars_Noop(t *testing.T) {
 	m := parseSecretManifest(t, noPolicy)
 	if err := townctl.ResolveSecrets(m); err != nil {
 		t.Errorf("no vars: unexpected error: %v", err)
+	}
+}
+
+func TestVerifyRequiredSecrets_SurveyorWithKey(t *testing.T) {
+	toml := `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+[town.agents]
+surveyor = true
+
+[secrets]
+anthropic_api_key = "sk-real-key"
+`
+	m := parseSecretManifest(t, toml)
+	if err := townctl.VerifyRequiredSecrets(m); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestVerifyRequiredSecrets_SurveyorMissingKey(t *testing.T) {
+	toml := `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+[town.agents]
+surveyor = true
+`
+	m := parseSecretManifest(t, toml)
+	err := townctl.VerifyRequiredSecrets(m)
+	if err == nil {
+		t.Fatal("expected error when surveyor=true and anthropic_api_key is empty, got nil")
+	}
+}
+
+func TestVerifyRequiredSecrets_NoSurveyorNoKey(t *testing.T) {
+	toml := `
+version = "1"
+
+[town]
+name = "t"
+home = "/opt/gt"
+`
+	m := parseSecretManifest(t, toml)
+	if err := townctl.VerifyRequiredSecrets(m); err != nil {
+		t.Errorf("no surveyor: unexpected error: %v", err)
+	}
+}
+
+func TestBuildSurveyorEnv_InjectsFileSourcedKey(t *testing.T) {
+	// Ensure the env var is not set in the test environment.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	os.Unsetenv("GITHUB_TOKEN")
+
+	env := townctl.BuildSurveyorEnv("sk-from-file", "gh-from-file")
+
+	var gotKey, gotToken bool
+	for _, kv := range env {
+		if kv == "ANTHROPIC_API_KEY=sk-from-file" {
+			gotKey = true
+		}
+		if kv == "GITHUB_TOKEN=gh-from-file" {
+			gotToken = true
+		}
+	}
+	if !gotKey {
+		t.Error("ANTHROPIC_API_KEY not injected into surveyor env")
+	}
+	if !gotToken {
+		t.Error("GITHUB_TOKEN not injected into surveyor env")
+	}
+}
+
+func TestBuildSurveyorEnv_SkipsAlreadySetKey(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-from-env")
+
+	env := townctl.BuildSurveyorEnv("sk-from-file", "")
+
+	var count int
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
+			count++
+		}
+	}
+	// Should appear exactly once (from os.Environ(), not injected again).
+	if count != 1 {
+		t.Errorf("ANTHROPIC_API_KEY appears %d times in env, want 1", count)
 	}
 }
 

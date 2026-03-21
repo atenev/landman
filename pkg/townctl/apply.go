@@ -115,6 +115,11 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 		return err
 	}
 
+	// Step 5a — Verify that required secrets are non-empty after resolution.
+	if err := VerifyRequiredSecrets(m); err != nil {
+		return err
+	}
+
 	// Step 5b — Apply-time filesystem checks (CLAUDE.md path existence).
 	if err := manifest.ValidateApplyTime(m); err != nil {
 		return fmt.Errorf("%s: apply-time validation: %w", manifestPath, err)
@@ -160,7 +165,8 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 			MaxRetries:            m.Town.Agents.SurveyorRetryCount,
 			PatrolIntervalSeconds: m.Town.Cost.PatrolIntervalSeconds,
 		}
-		if err := EnsureSurveyor(gtHome, manifestDir, tuning); err != nil {
+		surveyorEnv := BuildSurveyorEnv(m.Secrets.AnthropicAPIKey, m.Secrets.GitHubToken)
+		if err := EnsureSurveyor(gtHome, manifestDir, tuning, surveyorEnv); err != nil {
 			// Non-fatal: log a warning but do not fail the apply. The Surveyor
 			// can be started manually or via systemd if auto-launch fails.
 			log.Warn("surveyor launch failed", "error", err.Error())

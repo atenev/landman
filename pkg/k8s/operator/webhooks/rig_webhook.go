@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	admissionv1 "k8s.io/api/admission/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -44,11 +45,30 @@ func (v *RigValidator) InjectDecoder(d admission.Decoder) error {
 	return nil
 }
 
-// Handle validates a Rig admission request (Rule 5: townRef must resolve).
+// Handle validates a Rig admission request.
+// Rules enforced:
+//   - Immutable field on UPDATE: spec.townRef cannot change after creation.
+//   - Rule 5: townRef resolves to an existing GasTown.
 func (v *RigValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
 	rig := &gasv1alpha1.Rig{}
 	if err := v.decoder.DecodeRaw(req.Object, rig); err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
+	}
+
+	// spec.townRef is immutable: re-parenting a Rig to a different GasTown
+	// mid-lifecycle produces undefined behaviour in Dolt and on agents.
+	if req.Operation == admissionv1.Update {
+		old := &gasv1alpha1.Rig{}
+		if err := v.decoder.DecodeRaw(req.OldObject, old); err != nil {
+			return admission.Errored(http.StatusBadRequest,
+				fmt.Errorf("decode oldObject: %w", err))
+		}
+		if rig.Spec.TownRef != old.Spec.TownRef {
+			return admission.Denied(fmt.Sprintf(
+				"spec.townRef: Forbidden: field is immutable after creation "+
+					"(old: %q, new: %q)",
+				old.Spec.TownRef, rig.Spec.TownRef))
+		}
 	}
 
 	// Rule 5: townRef resolves to an existing GasTown.
