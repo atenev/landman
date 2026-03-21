@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	admissionv1 "k8s.io/api/admission/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,14 +38,45 @@ func (v *GasTownValidator) InjectDecoder(d admission.Decoder) error {
 }
 
 // Handle validates a GasTown admission request (Rules 6–7).
+// Rules enforced:
+//   - Immutable field on UPDATE: spec.doltRef cannot change after creation.
+//   - spec.doltRef.namespace must be non-empty (GasTown is cluster-scoped and
+//     cannot supply a default namespace for the referenced DoltInstance).
+//   - Rule 6: doltRef resolves to an existing DoltInstance.
+//   - Rule 7: surveyor=true requires surveyorClaudeMdRef.
 func (v *GasTownValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
 	gt := &gasv1alpha1.GasTown{}
 	if err := v.decoder.DecodeRaw(req.Object, gt); err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	// Rule 6: doltRef resolves to an existing DoltInstance.
+	// spec.doltRef is immutable: re-pointing a GasTown to a different Dolt
+	// database mid-lifecycle produces undefined behaviour in controllers and
+	// running agents.
+	if req.Operation == admissionv1.Update {
+		old := &gasv1alpha1.GasTown{}
+		if err := v.decoder.DecodeRaw(req.OldObject, old); err != nil {
+			return admission.Errored(http.StatusBadRequest,
+				fmt.Errorf("decode oldObject: %w", err))
+		}
+		if gt.Spec.DoltRef != old.Spec.DoltRef {
+			return admission.Denied(fmt.Sprintf(
+				"spec.doltRef: Forbidden: field is immutable after creation "+
+					"(old: %s/%s, new: %s/%s)",
+				old.Spec.DoltRef.Namespace, old.Spec.DoltRef.Name,
+				gt.Spec.DoltRef.Namespace, gt.Spec.DoltRef.Name))
+		}
+	}
+
+	// Rule 6: doltRef.Namespace must be explicitly set. GasTown is a
+	// cluster-scoped resource and has no namespace to fall back on, so an
+	// empty namespace would silently query the wrong bucket.
 	doltRef := gt.Spec.DoltRef
+	if doltRef.Namespace == "" {
+		return admission.Denied(
+			"spec.doltRef.namespace: Required value: namespace must not be empty")
+	}
+
 	dolt := &gasv1alpha1.DoltInstance{}
 	if err := v.Get(ctx, client.ObjectKey{
 		Name:      doltRef.Name,
