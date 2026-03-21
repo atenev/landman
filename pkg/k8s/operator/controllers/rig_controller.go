@@ -270,7 +270,7 @@ ON DUPLICATE KEY UPDATE
 
 	if len(rig.Spec.Formulas) > 0 {
 		const insertFormula = `
-INSERT INTO desired_formulas (rig_name, formula_name, schedule)
+INSERT INTO desired_formulas (rig_name, name, schedule)
 VALUES (?, ?, ?)`
 		for _, f := range rig.Spec.Formulas {
 			if _, err := tx.ExecContext(ctx, insertFormula, rig.Name, f.Name, f.Schedule); err != nil {

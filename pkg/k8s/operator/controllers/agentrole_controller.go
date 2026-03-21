@@ -371,27 +371,22 @@ func (r *AgentRoleReconciler) patchStatusFromActual(
 	dolt *doltClient,
 	ar *gasv1alpha1.AgentRole,
 ) error {
+	// COUNT(*) always returns one row; MAX(last_seen) is NULL when no rows match.
 	const query = `
-SELECT active_instances, last_seen_at
+SELECT COUNT(*), MAX(last_seen)
 FROM actual_custom_roles
-WHERE name = ?
-LIMIT 1`
+WHERE role_name = ?`
 
 	var activeInstances int32
-	var lastSeenAt sql.NullTime
-	err := dolt.db.QueryRowContext(ctx, query, ar.Name).Scan(&activeInstances, &lastSeenAt)
-	if err == sql.ErrNoRows {
-		// Role not yet seen in actual topology — leave status as-is.
-		return nil
-	}
-	if err != nil {
+	var lastSeen sql.NullTime
+	if err := dolt.db.QueryRowContext(ctx, query, ar.Name).Scan(&activeInstances, &lastSeen); err != nil {
 		return fmt.Errorf("query actual_custom_roles: %w", err)
 	}
 
 	base := ar.DeepCopy()
 	ar.Status.ActiveInstances = activeInstances
-	if lastSeenAt.Valid {
-		t := metav1.NewTime(lastSeenAt.Time)
+	if lastSeen.Valid {
+		t := metav1.NewTime(lastSeen.Time)
 		ar.Status.LastSeenAt = &t
 	}
 
