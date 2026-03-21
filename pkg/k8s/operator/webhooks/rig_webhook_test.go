@@ -218,6 +218,48 @@ func TestRigDefaulter_GasTownNotFound_AllowedNoPatch(t *testing.T) {
 
 // ── RigValidator tests ──────────────────────────────────────────────────────
 
+// TestRigValidator_CREATE verifies that a Rig CREATE is allowed when the
+// referenced GasTown exists, and denied when it does not (Rule 5).
+func TestRigValidator_CREATE(t *testing.T) {
+	myTown := makeGasTown("existing-town")
+
+	tests := []struct {
+		name      string
+		rig       *gasv1alpha1.Rig
+		gastowns  []*gasv1alpha1.GasTown
+		wantAllow bool
+	}{
+		{
+			name:      "valid townRef resolves to existing GasTown",
+			rig:       makeRig("my-rig", "existing-town"),
+			gastowns:  []*gasv1alpha1.GasTown{myTown},
+			wantAllow: true,
+		},
+		{
+			name:      "townRef not found denied",
+			rig:       makeRig("my-rig", "missing-town"),
+			gastowns:  nil,
+			wantAllow: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newRigValidator(t, tc.gastowns...)
+			req := admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Operation: admissionv1.Create,
+					Object:    encodeRig(t, tc.rig),
+				},
+			}
+			resp := v.Handle(context.Background(), req)
+			if resp.Allowed != tc.wantAllow {
+				t.Errorf("Allowed=%v want %v; result=%+v", resp.Allowed, tc.wantAllow, resp.Result)
+			}
+		})
+	}
+}
+
 func TestRigValidator_TownRefImmutable(t *testing.T) {
 	gt := makeGasTown("town-a")
 	gt2 := makeGasTown("town-b")

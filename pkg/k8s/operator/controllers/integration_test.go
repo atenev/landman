@@ -440,7 +440,7 @@ func TestRigReconcile_WritesDoltAndInheritsDefaults(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(doltInst, gt, rig).
 		WithStatusSubresource(rig).Build()
 
-	db := newFakeDoltDB()
+	db, capture := newCapturingFakeDoltDB()
 	defer db.Close()
 
 	r := &RigReconciler{
@@ -467,6 +467,15 @@ func TestRigReconcile_WritesDoltAndInheritsDefaults(t *testing.T) {
 	assertCondition(t, updated.Status.Conditions, "DesiredTopologyInSync", metav1.ConditionTrue)
 	if updated.Status.DoltCommit == "" {
 		t.Errorf("expected DoltCommit to be set")
+	}
+
+	// Verify the inherited mayorModel='claude-opus-4-6' was written to desired_agent_config.
+	if !capture.containsStringArg("desired_agent_config", "claude-opus-4-6") {
+		t.Errorf("expected mayor_model='claude-opus-4-6' (inherited from GasTown) to be written to desired_agent_config")
+	}
+	// Verify the inherited polecatModel was written (confirms maxPolecats=15 row was also written).
+	if !capture.containsStringArg("desired_agent_config", "claude-sonnet-4-6") {
+		t.Errorf("expected polecat_model='claude-sonnet-4-6' (inherited from GasTown) to be written to desired_agent_config")
 	}
 }
 
@@ -660,18 +669,13 @@ func TestRigReconcile_DrainFinalizer(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(doltInst, gt, rig).
 		WithStatusSubresource(rig).Build()
 
-	// Track SQL calls to verify enabled=false is written.
-	var executedSQL []string
-	db := newFakeDoltDB()
+	db, capture := newCapturingFakeDoltDB()
 	defer db.Close()
 
 	r := &RigReconciler{
-		Client: c,
-		Scheme: s,
-		ConnectDolt: func(ctx context.Context, k client.Client, ref gasv1alpha1.NamespacedRef) (*doltClient, error) {
-			executedSQL = append(executedSQL, "connected")
-			return &doltClient{db: db}, nil
-		},
+		Client:      c,
+		Scheme:      s,
+		ConnectDolt: fakeDoltConnector(db),
 	}
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "drain-test", Namespace: "default"}}
 
@@ -682,9 +686,9 @@ func TestRigReconcile_DrainFinalizer(t *testing.T) {
 		t.Fatalf("Reconcile (drain): %v", err)
 	}
 
-	// Verify Dolt was called (drain attempted).
-	if len(executedSQL) == 0 {
-		t.Errorf("expected Dolt to be called during drain, but it was not")
+	// Verify that enabled=false was written to desired_rigs during drain.
+	if !capture.anyQuery("enabled = false") {
+		t.Errorf("expected drain to write 'UPDATE desired_rigs SET enabled = false'")
 	}
 
 	// After a successful drain, the finalizer is removed. The fake client

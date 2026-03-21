@@ -162,3 +162,104 @@ func fakeDoltConnectorByName(db *sql.DB) DoltConnectorByName {
 		return &doltClient{db: db}, nil
 	}
 }
+
+// ── Capturing fake SQL driver ─────────────────────────────────────────────────
+//
+// newCapturingFakeDoltDB returns a *sql.DB whose executed statements are
+// captured in a queryCapture for assertion in tests. Use anyQuery to check
+// that a SQL template substring was executed, and containsStringArg to check
+// that a statement with a given query substring also had a matching string arg.
+
+// executedStmt records one SQL Exec call.
+type executedStmt struct {
+	query string
+	args  []driver.Value
+}
+
+// queryCapture accumulates SQL statements executed against a capturing fake DB.
+type queryCapture struct {
+	mu    sync.Mutex
+	stmts []executedStmt
+}
+
+func (c *queryCapture) record(query string, args []driver.Value) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cp := make([]driver.Value, len(args))
+	copy(cp, args)
+	c.stmts = append(c.stmts, executedStmt{query: query, args: cp})
+}
+
+// anyQuery returns true if any captured statement's query contains sub.
+func (c *queryCapture) anyQuery(sub string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, s := range c.stmts {
+		if strings.Contains(s.query, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsStringArg returns true if any captured statement whose query contains
+// querySub also passed a string argument containing argSub.
+func (c *queryCapture) containsStringArg(querySub, argSub string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, s := range c.stmts {
+		if !strings.Contains(s.query, querySub) {
+			continue
+		}
+		for _, v := range s.args {
+			if sv, ok := v.(string); ok && strings.Contains(sv, argSub) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type capturingFakeDoltStmt struct {
+	query   string
+	capture *queryCapture
+}
+
+func (s *capturingFakeDoltStmt) Close() error  { return nil }
+func (s *capturingFakeDoltStmt) NumInput() int { return -1 }
+func (s *capturingFakeDoltStmt) Exec(args []driver.Value) (driver.Result, error) {
+	s.capture.record(s.query, args)
+	return fakeDoltResult{}, nil
+}
+func (s *capturingFakeDoltStmt) Query(args []driver.Value) (driver.Rows, error) {
+	cols := parseSelectColumns(s.query)
+	if strContains(s.query, "dolt_hashof") {
+		return &fakeDoltRows{cols: cols, values: []string{"abc123def456"}}, nil
+	}
+	return &fakeDoltRows{cols: cols}, nil
+}
+
+type capturingFakeDoltConn struct {
+	capture *queryCapture
+}
+
+func (c *capturingFakeDoltConn) Prepare(query string) (driver.Stmt, error) {
+	return &capturingFakeDoltStmt{query: query, capture: c.capture}, nil
+}
+func (c *capturingFakeDoltConn) Close() error                      { return nil }
+func (c *capturingFakeDoltConn) Begin() (driver.Tx, error)         { return &fakeDoltTx{}, nil }
+
+type capturingDoltConnector struct {
+	capture *queryCapture
+}
+
+func (c *capturingDoltConnector) Connect(_ context.Context) (driver.Conn, error) {
+	return &capturingFakeDoltConn{capture: c.capture}, nil
+}
+func (c *capturingDoltConnector) Driver() driver.Driver { return &fakeDoltDriver{} }
+
+// newCapturingFakeDoltDB returns a *sql.DB backed by the capturing fake driver.
+func newCapturingFakeDoltDB() (*sql.DB, *queryCapture) {
+	cap := &queryCapture{}
+	return sql.OpenDB(&capturingDoltConnector{capture: cap}), cap
+}
