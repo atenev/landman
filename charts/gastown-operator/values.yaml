@@ -102,3 +102,9 @@ prometheusRule:
 
     # Budget % used before GasTownBudgetCritical fires.
     budgetCriticalPct: 90
+
+grafana:
+  # Set to true if a Grafana sidecar provisioner is running in the cluster.
+  # Creates a ConfigMap with the gastown-fleet-health dashboard JSON; the
+  # grafana_dashboard: "1" label triggers auto-provisioning via kube-prometheus-stack.
+  enabled: false
