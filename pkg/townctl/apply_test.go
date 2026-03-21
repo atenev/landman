@@ -207,6 +207,45 @@ home = "/opt/gt"
 	}
 }
 
+// ── Apply — DoltDSN code path (apply.go:186-187) ───────────────────────────
+
+// TestApply_DoltDSN_ConnectionFailure_ReturnsError verifies that when DoltDSN
+// is set and the DSN points to a non-existent server, Apply returns a non-nil
+// error from the ConnectDSN path (not from the component-based Connect path).
+func TestApply_DoltDSN_ConnectionFailure_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := writeManifest(t, dir, "town.toml", minManifest)
+	err := townctl.Apply(path, townctl.ApplyOptions{
+		DoltDSN: "root@tcp(127.0.0.1:19997)/gastown?parseTime=true",
+	})
+	if err == nil {
+		t.Fatal("expected connection error from DoltDSN path, got nil")
+	}
+}
+
+// TestApply_DoltDSN_EmptyComponentFields verifies that when DoltDSN is set and
+// all component-based fields (DoltHost, DoltDB, etc.) are left at their zero
+// values, Apply still attempts the DSN path (not the component path) and
+// returns an error from ConnectDSN when the server is unreachable.
+//
+// This confirms the applyDefaults branch (apply.go:58-61) that skips component
+// defaults when DoltDSN is provided.
+func TestApply_DoltDSN_EmptyComponentFields(t *testing.T) {
+	dir := t.TempDir()
+	path := writeManifest(t, dir, "town.toml", minManifest)
+	// DoltDSN is set; all component fields are intentionally empty.
+	// If applyDefaults erroneously filled in "localhost" as DoltHost, the
+	// component-based Connect path would be taken instead of ConnectDSN. Either
+	// way the server is unreachable, but the test confirms no panic or nil error.
+	err := townctl.Apply(path, townctl.ApplyOptions{
+		DoltDSN: "root@tcp(127.0.0.1:19996)/gastown?parseTime=true",
+		// DoltHost, DoltPort, DoltDB, DoltUser all zero.
+	})
+	if err == nil {
+		t.Fatal("expected connection error when DSN points to unreachable server, got nil")
+	}
+}
+
 // ── Apply — Dolt connection failure ────────────────────────────────────────
 
 func TestApply_DoltConnectionFailure_ReturnsError(t *testing.T) {

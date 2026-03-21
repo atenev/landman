@@ -394,6 +394,45 @@ func TestDoltInteg_FKConstraint_DesiredRigCustomRoles(t *testing.T) {
 	}
 }
 
+// TestDoltInteg_Surveyor_LaunchNonFatal verifies that when town.agents.surveyor
+// is true and the surveyor binary is not on PATH, Apply completes successfully
+// (apply.go:211-224). The EnsureSurveyor error is non-fatal: it is logged as a
+// warning and Apply returns nil so that the topology write is not rolled back.
+func TestDoltInteg_Surveyor_LaunchNonFatal(t *testing.T) {
+	_ = doltIntegSkip(t)
+	dir := t.TempDir()
+
+	// Use a temp dir as gtHome so EnsureSurveyor has a writable run/ directory
+	// path. The surveyor binary will not be found on PATH regardless.
+	gtHome := t.TempDir()
+
+	manifestContent := fmt.Sprintf(`version = "1"
+
+[town]
+name = "integ-surveyor-test"
+home = %q
+
+[town.agents]
+surveyor = true
+
+[[rig]]
+name   = "backend"
+repo   = "/srv/backend"
+branch = "main"
+`, gtHome)
+
+	manifestPath := writeManifest(t, dir, "town.toml", manifestContent)
+	opts := doltApplyOpts(t)
+
+	// The surveyor binary does not exist on PATH in the test environment.
+	// EnsureSurveyor will fail with "executable file not found", but Apply
+	// must still return nil (non-fatal warning path).
+	if err := townctl.Apply(manifestPath, opts); err != nil {
+		t.Fatalf("Apply with town.agents.surveyor=true returned error: %v\n"+
+			"(EnsureSurveyor failure must be non-fatal)", err)
+	}
+}
+
 // doltApplyOpts builds ApplyOptions from env vars (host/port/db/user/password).
 // Must only be called after doltIntegSkip has confirmed the env vars are set.
 func doltApplyOpts(t *testing.T) townctl.ApplyOptions {
