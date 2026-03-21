@@ -53,7 +53,7 @@ type DesiredAgentConfigRow struct {
 	Role         string
 	Enabled      bool
 	Model        string
-	MaxCount     int // non-zero for polecat rows only
+	MaxPolecats  int // non-zero for polecat rows only
 	ClaudeMDPath string
 }
 
@@ -167,8 +167,8 @@ func writeDefaultsSection(b *strings.Builder, state ExportState) {
 			if row.Model != "" && defaultPolekatModel == "" {
 				defaultPolekatModel = row.Model
 			}
-			if row.MaxCount > defaultMaxPolecats {
-				defaultMaxPolecats = row.MaxCount
+			if row.MaxPolecats > defaultMaxPolecats {
+				defaultMaxPolecats = row.MaxPolecats
 			}
 		}
 	}
@@ -331,8 +331,8 @@ func writeAgentConfigSection(b *strings.Builder, rows []DesiredAgentConfigRow, c
 		}
 	}
 	if row, ok := agentByRole["polecat"]; ok {
-		if row.MaxCount > 0 {
-			fmt.Fprintf(b, "max_polecats = %d\n", row.MaxCount)
+		if row.MaxPolecats > 0 {
+			fmt.Fprintf(b, "max_polecats = %d\n", row.MaxPolecats)
 		}
 		if row.Model != "" {
 			fmt.Fprintf(b, "polecat_model = %q\n", row.Model)
@@ -402,8 +402,8 @@ func writeGasTownCR(b *strings.Builder, state ExportState, namespace, name strin
 			if row.Model != "" && defaultPolekatModel == "" {
 				defaultPolekatModel = row.Model
 			}
-			if row.MaxCount > defaultMaxPolecats {
-				defaultMaxPolecats = row.MaxCount
+			if row.MaxPolecats > defaultMaxPolecats {
+				defaultMaxPolecats = row.MaxPolecats
 			}
 		}
 	}
@@ -469,8 +469,8 @@ func writeRigCR(b *strings.Builder, rig DesiredRigRow, state ExportState, namesp
 			b.WriteString("  agents:\n")
 			writtenAgents = true
 		}
-		if row.MaxCount > 0 {
-			fmt.Fprintf(b, "    maxPolecats: %d\n", row.MaxCount)
+		if row.MaxPolecats > 0 {
+			fmt.Fprintf(b, "    maxPolecats: %d\n", row.MaxPolecats)
 		}
 	}
 	_ = writtenAgents
@@ -579,7 +579,7 @@ func writeCostPolicyFieldsYAML(b *strings.Builder, row CostPolicyRow, indent str
 func ExportQuerySQL() []string {
 	return []string{
 		"SELECT name, repo, branch, enabled FROM desired_rigs ORDER BY name;",
-		"SELECT rig_name, role, enabled, model, max_count, claude_md_path FROM desired_agent_config ORDER BY rig_name, role;",
+		"SELECT rig_name, role, enabled, model, max_polecats, claude_md_path FROM desired_agent_config ORDER BY rig_name, role;",
 		"SELECT rig_name, name, schedule FROM desired_formulas ORDER BY rig_name, name;",
 		"SELECT name, description, scope, lifespan, trigger_type, trigger_schedule, trigger_event, parent_role, reports_to_role, max_instances, claude_md_path, model FROM desired_custom_roles ORDER BY name;",
 		"SELECT rig_name, role_name, enabled FROM desired_rig_custom_roles ORDER BY rig_name, role_name;",

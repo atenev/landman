@@ -107,7 +107,7 @@ func MergeAndWriteExtendsChains(m *manifest.TownManifest, gtHome string) error {
 // ResolveRigCustomRoles returns the set of (rig, role) opt-in pairs for
 // scope=rig roles. Only rigs whose agents.roles list is non-empty produce rows.
 func ResolveRigCustomRoles(m *manifest.TownManifest) []RigCustomRoleRow {
-	var rows []RigCustomRoleRow
+	rows := make([]RigCustomRoleRow, 0, len(m.Rigs))
 	for _, rig := range m.Rigs {
 		for _, roleName := range rig.Agents.Roles {
 			rows = append(rows, RigCustomRoleRow{

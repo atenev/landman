@@ -68,7 +68,7 @@ func TestExport_Local_SingleRig(t *testing.T) {
 			{RigName: "backend", Role: "witness", Enabled: true},
 			{RigName: "backend", Role: "refinery", Enabled: true},
 			{RigName: "backend", Role: "deacon", Enabled: true},
-			{RigName: "backend", Role: "polecat", Enabled: true, MaxCount: 10, Model: "claude-haiku-4-5-20251001"},
+			{RigName: "backend", Role: "polecat", Enabled: true, MaxPolecats: 10, Model: "claude-haiku-4-5-20251001"},
 		},
 	}
 
@@ -186,7 +186,7 @@ func TestExport_Local_DefaultsModelInference(t *testing.T) {
 		},
 		AgentConfig: []townctl.DesiredAgentConfigRow{
 			{RigName: "r1", Role: "mayor", Enabled: true, Model: "claude-opus-4-6"},
-			{RigName: "r1", Role: "polecat", Enabled: true, MaxCount: 5, Model: "claude-sonnet-4-6"},
+			{RigName: "r1", Role: "polecat", Enabled: true, MaxPolecats: 5, Model: "claude-sonnet-4-6"},
 		},
 	}
 

@@ -247,8 +247,8 @@ type formulaRow struct {
 type formulaKey struct{ rigName, name string }
 
 func resolveFormulaRows(m *manifest.TownManifest) ([]formulaRow, []formulaKey) {
-	var rows []formulaRow
-	var keys []formulaKey
+	rows := make([]formulaRow, 0, len(m.Rigs))
+	keys := make([]formulaKey, 0, len(m.Rigs))
 	for _, rig := range m.Rigs {
 		for _, f := range rig.Formulas {
 			rows = append(rows, formulaRow{
