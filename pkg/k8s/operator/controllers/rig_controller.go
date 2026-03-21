@@ -229,36 +229,48 @@ ON DUPLICATE KEY UPDATE
 		return "", fmt.Errorf("upsert desired_rigs: %w", err)
 	}
 
-	// b. UPSERT desired_agent_config
+	// b. Replace desired_agent_config for this rig.
+	// Schema (migration 001) is normalized: one row per (rig_name, role).
+	// "A disabled role has no row — absence means disabled."
 	mayorClaudeMdPath := fmt.Sprintf("/gt/rigs/%s/CLAUDE.md", rig.Name)
 
-	const upsertAgentConfig = `
-INSERT INTO desired_agent_config
-  (rig_name, mayor_enabled, witness_enabled, refinery_enabled, deacon_enabled,
-   mayor_model, polecat_model, max_polecats, mayor_claude_md_path)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON DUPLICATE KEY UPDATE
-  mayor_enabled      = VALUES(mayor_enabled),
-  witness_enabled    = VALUES(witness_enabled),
-  refinery_enabled   = VALUES(refinery_enabled),
-  deacon_enabled     = VALUES(deacon_enabled),
-  mayor_model        = VALUES(mayor_model),
-  polecat_model      = VALUES(polecat_model),
-  max_polecats       = VALUES(max_polecats),
-  mayor_claude_md_path = VALUES(mayor_claude_md_path)`
-
-	if _, err := tx.ExecContext(ctx, upsertAgentConfig,
-		rig.Name,
-		rig.Spec.Agents.Mayor,
-		rig.Spec.Agents.Witness,
-		rig.Spec.Agents.Refinery,
-		rig.Spec.Agents.Deacon,
-		resolved.MayorModel,
-		resolved.PolecatModel,
-		resolved.MaxPolecats,
-		mayorClaudeMdPath,
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM desired_agent_config WHERE rig_name = ?`, rig.Name,
 	); err != nil {
-		return "", fmt.Errorf("upsert desired_agent_config: %w", err)
+		return "", fmt.Errorf("delete desired_agent_config: %w", err)
+	}
+
+	const insertAgentConfig = `
+INSERT INTO desired_agent_config (rig_name, role, enabled, model, max_polecats, claude_md_path)
+VALUES (?, ?, ?, ?, ?, ?)`
+
+	type agentCfg struct {
+		role         string
+		enabled      bool
+		model        *string
+		maxPolecats  *int32
+		claudeMdPath *string
+	}
+
+	mayorModel := resolved.MayorModel
+	polecatModel := resolved.PolecatModel
+	maxPolecats := resolved.MaxPolecats
+	agentRows := []agentCfg{
+		{role: "mayor", enabled: rig.Spec.Agents.Mayor, model: &mayorModel, claudeMdPath: &mayorClaudeMdPath},
+		{role: "witness", enabled: rig.Spec.Agents.Witness},
+		{role: "refinery", enabled: rig.Spec.Agents.Refinery},
+		{role: "deacon", enabled: rig.Spec.Agents.Deacon},
+		{role: "polecat", enabled: true, model: &polecatModel, maxPolecats: &maxPolecats},
+	}
+	for _, cfg := range agentRows {
+		if !cfg.enabled {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, insertAgentConfig,
+			rig.Name, cfg.role, cfg.enabled, cfg.model, cfg.maxPolecats, cfg.claudeMdPath,
+		); err != nil {
+			return "", fmt.Errorf("insert desired_agent_config %q: %w", cfg.role, err)
+		}
 	}
 
 	// c. Replace desired_formulas for this rig.
@@ -508,27 +520,12 @@ WHERE rig_name = ? AND role = 'polecat' AND status = 'running'`
 		runningPolecats = 0
 	}
 
-	const convergedQuery = `
-SELECT last_converged_at
-FROM reconcile_log
-WHERE rig_name = ?
-ORDER BY last_converged_at DESC
-LIMIT 1`
-
-	var lastConvergedAt sql.NullTime
-	_ = dolt.db.QueryRowContext(ctx, convergedQuery, rig.Name).Scan(&lastConvergedAt)
-
 	base := rig.DeepCopy()
 	rig.Status.RigHealth = rigStatusToHealth(rigStatus)
 	rig.Status.RunningPolecats = runningPolecats
-	if lastConvergedAt.Valid {
-		t := metav1.NewTime(lastConvergedAt.Time)
-		rig.Status.LastConvergedAt = &t
-	}
 
 	if rig.Status.RigHealth != base.Status.RigHealth ||
-		rig.Status.RunningPolecats != base.Status.RunningPolecats ||
-		!timeEqual(rig.Status.LastConvergedAt, base.Status.LastConvergedAt) {
+		rig.Status.RunningPolecats != base.Status.RunningPolecats {
 		if err := r.Status().Update(ctx, rig); err != nil {
 			return fmt.Errorf("update status: %w", err)
 		}
