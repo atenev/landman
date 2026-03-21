@@ -7,10 +7,12 @@
 package townctl
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/tenev/dgt/pkg/manifest"
 )
@@ -145,8 +147,11 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 		return printDryRun(m, manifestPath)
 	}
 
-	// Step 6 — Connect to Dolt.
-	db, err := Connect(opts.DoltHost, opts.DoltPort, opts.DoltDB, opts.DoltUser, opts.DoltPassword)
+	// Step 6 — Connect to Dolt. Bound the initial ping to 10 s so a slow or
+	// misconfigured Dolt instance does not hang the terminal indefinitely.
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer connectCancel()
+	db, err := Connect(connectCtx, opts.DoltHost, opts.DoltPort, opts.DoltDB, opts.DoltUser, opts.DoltPassword)
 	if err != nil {
 		return err
 	}

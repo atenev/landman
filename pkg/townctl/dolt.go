@@ -6,6 +6,7 @@
 package townctl
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -27,20 +28,32 @@ type Stmt struct {
 }
 
 // Connect opens a MySQL-protocol connection to Dolt and verifies connectivity.
-// Dolt accepts standard MySQL driver DSN format. The caller must call Close()
-// when done.
-func Connect(host string, port int, dbName, user, password string) (*DB, error) {
+// Dolt accepts standard MySQL driver DSN format. ctx bounds the initial ping;
+// use context.WithTimeout to prevent indefinite hangs on misconfigured hosts.
+// The caller must call Close() when done.
+func Connect(ctx context.Context, host string, port int, dbName, user, password string) (*DB, error) {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
 		user, password, host, port, dbName)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("dolt: connect: %w", err)
 	}
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("dolt: connect: %w", err)
 	}
 	return &DB{db}, nil
+}
+
+// SQLSummary returns the first 60 characters of s followed by "..." if s is
+// longer. Use this instead of embedding raw SQL in error messages to avoid
+// leaking schema structure and filesystem paths into logs.
+func SQLSummary(s string) string {
+	const maxLen = 60
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // ExecTransaction executes stmts inside a single BEGIN / COMMIT. On any error
@@ -55,7 +68,7 @@ func (d *DB) ExecTransaction(stmts []Stmt) error {
 	for _, stmt := range stmts {
 		if _, err := tx.Exec(stmt.Query, stmt.Args...); err != nil {
 			_ = tx.Rollback()
-			return fmt.Errorf("dolt: %s: %w", stmt.Query, err)
+			return fmt.Errorf("dolt: %s: %w", SQLSummary(stmt.Query), err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

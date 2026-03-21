@@ -58,7 +58,7 @@ func doltIntegSkip(t *testing.T) *townctl.DB {
 	}
 	password := os.Getenv("TOWN_CTL_TEST_DOLT_PASSWORD")
 
-	db, err := townctl.Connect(host, port, dbName, user, password)
+	db, err := townctl.Connect(t.Context(), host, port, dbName, user, password)
 	if err != nil {
 		t.Fatalf("doltIntegSkip: Connect: %v", err)
 	}

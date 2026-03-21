@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	// Register the MySQL driver used for Dolt's MySQL-compatible endpoint.
 	_ "github.com/go-sql-driver/mysql"
@@ -383,10 +384,12 @@ func applyWrite(m *manifest.TownManifest, dsn string) error {
 	}
 	defer db.Close()
 
-	ctx := context.Background()
-	if err := db.PingContext(ctx); err != nil {
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer pingCancel()
+	if err := db.PingContext(pingCtx); err != nil {
 		return fmt.Errorf("ping dolt: %w", err)
 	}
+	ctx := context.Background()
 
 	// Build the full ordered statement list.
 	var allStmts []townctl.Stmt
@@ -403,7 +406,7 @@ func applyWrite(m *manifest.TownManifest, dsn string) error {
 
 	for _, stmt := range allStmts {
 		if _, err := tx.ExecContext(ctx, stmt.Query, stmt.Args...); err != nil {
-			return fmt.Errorf("exec statement: %w\nSQL: %s", err, stmt.Query)
+			return fmt.Errorf("exec statement: %w\nSQL: %s", err, townctl.SQLSummary(stmt.Query))
 		}
 	}
 
