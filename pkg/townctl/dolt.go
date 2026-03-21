@@ -34,13 +34,17 @@ type Stmt struct {
 func Connect(ctx context.Context, host string, port int, dbName, user, password string) (*DB, error) {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
 		user, password, host, port, dbName)
+	// maskedDSN replaces the password with *** for use in error messages so that
+	// credentials are never written to logs or Kubernetes Events.
+	maskedDSN := fmt.Sprintf("%s:***@tcp(%s:%d)/%s?parseTime=true",
+		user, host, port, dbName)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("dolt: connect: %w", err)
+		return nil, fmt.Errorf("dolt: open %s: %w", maskedDSN, err)
 	}
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("dolt: connect: %w", err)
+		return nil, fmt.Errorf("dolt: ping %s: %w", maskedDSN, err)
 	}
 	return &DB{db}, nil
 }
