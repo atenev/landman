@@ -8,8 +8,10 @@ package observer
 
 import (
 	"errors"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tenev/dgt/pkg/surveyor"
 )
 
 // Metrics holds all Prometheus collectors defined by pkg/observer.
@@ -241,4 +243,37 @@ func registerCounter(reg prometheus.Registerer, c prometheus.Counter) prometheus
 		panic(err)
 	}
 	return c
+}
+
+// UpdateMetrics records topology observations into m from snap.
+//
+// For each agent in snap.Actual.Agents the AgentStalenessSeconds gauge is set
+// to the number of seconds elapsed since that agent's last heartbeat. For each
+// desired rig in snap.Desired.Rigs the pool size gauges are updated: desired
+// reflects MaxPolecats, actual counts active worktrees for that rig, and delta
+// is desired minus actual (positive = under-provisioned).
+//
+// now is passed explicitly so callers can use a fixed clock in tests.
+func UpdateMetrics(m *Metrics, snap TopologySnapshot, desired surveyor.DesiredTopology, now time.Time) {
+	// Agent staleness.
+	for _, ag := range snap.Actual.Agents {
+		staleness := now.Sub(ag.LastSeen).Seconds()
+		m.AgentStalenessSeconds.WithLabelValues(ag.RigName, ag.Role).Set(staleness)
+	}
+
+	// Pool size gauges: count active worktrees per rig.
+	activeByRig := make(map[string]int, len(snap.Actual.Worktrees))
+	for _, wt := range snap.Actual.Worktrees {
+		if wt.Status == "active" {
+			activeByRig[wt.RigName]++
+		}
+	}
+
+	for _, dr := range desired.Rigs {
+		d := float64(dr.MaxPolecats)
+		a := float64(activeByRig[dr.Name])
+		m.PoolSizeDesired.WithLabelValues(dr.Name).Set(d)
+		m.PoolSizeActual.WithLabelValues(dr.Name).Set(a)
+		m.PoolSizeDelta.WithLabelValues(dr.Name).Set(d - a)
+	}
 }
