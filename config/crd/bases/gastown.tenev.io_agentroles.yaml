@@ -121,6 +121,13 @@ spec:
                 required:
                 - type
                 type: object
+                x-kubernetes-validations:
+                - message: schedule is required when type=schedule
+                  rule: "self.type != 'schedule' || (has(self.schedule) && self.schedule
+                    != '')"
+                - message: event is required when type=event
+                  rule: "self.type != 'event' || (has(self.event) && self.event !=
+                    '')"
             required:
             - identity
             - scope

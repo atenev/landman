@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -55,7 +56,7 @@ func (v *AgentRoleValidator) InjectDecoder(d admission.Decoder) error {
 	return nil
 }
 
-// Handle validates an AgentRole admission request (Rules 1–4 from spec).
+// Handle validates an AgentRole admission request (Rules 1–5 from spec).
 func (v *AgentRoleValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
 	ar := &gasv1alpha1.AgentRole{}
 	if err := v.decoder.DecodeRaw(req.Object, ar); err != nil {
@@ -106,6 +107,17 @@ func (v *AgentRoleValidator) Handle(ctx context.Context, req admission.Request) 
 			"spec.trigger.type: %q is not a recognized trigger type; "+
 				"must be one of: bead_assigned, schedule, event, manual",
 			ar.Spec.Trigger.Type))
+	}
+
+	// Rule 5: townRef resolves to an existing GasTown (analogous to rig_webhook Rule 5).
+	gastown := &gasv1alpha1.GasTown{}
+	if err := v.Get(ctx, client.ObjectKey{Name: ar.Spec.TownRef}, gastown); err != nil {
+		if apierrors.IsNotFound(err) {
+			return admission.Denied(fmt.Sprintf(
+				"spec.townRef: GasTown %q not found in cluster", ar.Spec.TownRef))
+		}
+		return admission.Errored(http.StatusInternalServerError,
+			fmt.Errorf("get gastown %q: %w", ar.Spec.TownRef, err))
 	}
 
 	return admission.Allowed("")

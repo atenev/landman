@@ -9,19 +9,24 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	gasv1alpha1 "github.com/tenev/dgt/pkg/k8s/operator/v1alpha1"
 	"github.com/tenev/dgt/pkg/k8s/operator/webhooks"
 )
 
-func newAgentRoleValidator(t *testing.T) *webhooks.AgentRoleValidator {
+func newAgentRoleValidator(t *testing.T, gastowns ...*gasv1alpha1.GasTown) *webhooks.AgentRoleValidator {
 	t.Helper()
-	v := &webhooks.AgentRoleValidator{}
 	scheme := runtime.NewScheme()
 	if err := gasv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
 	}
+	cb := fake.NewClientBuilder().WithScheme(scheme)
+	for _, gt := range gastowns {
+		cb = cb.WithObjects(gt)
+	}
+	v := &webhooks.AgentRoleValidator{Client: cb.Build()}
 	dec := admission.NewDecoder(scheme)
 	if err := v.InjectDecoder(dec); err != nil {
 		t.Fatalf("InjectDecoder: %v", err)
@@ -61,15 +66,19 @@ func makeAgentRole(name, parent, triggerType, schedule, event string) *gasv1alph
 }
 
 func TestAgentRoleValidator(t *testing.T) {
+	myTown := makeGasTown("my-town")
+
 	tests := []struct {
 		name       string
 		ar         *gasv1alpha1.AgentRole
+		gastowns   []*gasv1alpha1.GasTown
 		wantStatus int32
 		wantAllow  bool
 	}{
 		{
 			name:      "valid role",
 			ar:        makeAgentRole("analyst", "witness", "bead_assigned", "", ""),
+			gastowns:  []*gasv1alpha1.GasTown{myTown},
 			wantAllow: true,
 		},
 		{
@@ -135,6 +144,7 @@ func TestAgentRoleValidator(t *testing.T) {
 		{
 			name:      "schedule type with schedule",
 			ar:        makeAgentRole("analyst", "witness", "schedule", "0 * * * *", ""),
+			gastowns:  []*gasv1alpha1.GasTown{myTown},
 			wantAllow: true,
 		},
 		{
@@ -152,13 +162,21 @@ func TestAgentRoleValidator(t *testing.T) {
 		{
 			name:      "event type with event",
 			ar:        makeAgentRole("analyst", "witness", "event", "", "pr.opened"),
+			gastowns:  []*gasv1alpha1.GasTown{myTown},
 			wantAllow: true,
+		},
+		{
+			name:       "townRef not found",
+			ar:         makeAgentRole("analyst", "witness", "bead_assigned", "", ""),
+			gastowns:   nil,
+			wantStatus: http.StatusForbidden,
+			wantAllow:  false,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			v := newAgentRoleValidator(t)
+			v := newAgentRoleValidator(t, tc.gastowns...)
 			req := admission.Request{
 				AdmissionRequest: admissionv1.AdmissionRequest{
 					Object: encodeAgentRole(t, tc.ar),
