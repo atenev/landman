@@ -57,7 +57,8 @@ type GasTownReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is the main reconcile loop for GasTown.
-func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, retErr error) {
+	defer observeReconcile("gastown", time.Now(), &retErr)
 	logger := log.FromContext(ctx).WithValues("gastown", req.Name)
 
 	// 1. Fetch the GasTown CR (cluster-scoped, no namespace).

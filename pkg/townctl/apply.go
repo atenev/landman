@@ -29,7 +29,13 @@ type ApplyOptions struct {
 	// slog.Default() is used.
 	Logger *slog.Logger
 
-	// Dolt connection parameters. Defaults are applied when zero values.
+	// DoltDSN is a raw MySQL DSN for the Dolt connection (e.g.
+	// "root@tcp(127.0.0.1:3306)/gastown?parseTime=true"). When non-empty it
+	// takes precedence over the component-based fields below.
+	DoltDSN string
+
+	// Dolt connection parameters. Ignored when DoltDSN is non-empty.
+	// Defaults are applied from environment variables when zero values.
 	DoltHost     string
 	DoltPort     int
 	DoltDB       string
@@ -46,15 +52,20 @@ func (o *ApplyOptions) logger() *slog.Logger {
 }
 
 // applyDefaults fills zero-value Dolt connection fields with defaults.
+// Port is left at 0 when DoltDSN is set or when the caller wants the manifest's
+// dolt_port to take effect; Apply() applies the final port fallback.
 func (o *ApplyOptions) applyDefaults() {
+	if o.DoltDSN != "" {
+		// DSN is provided directly — skip component defaults.
+		return
+	}
 	if o.DoltHost == "" {
 		o.DoltHost = envOrDefault("TOWN_CTL_DOLT_HOST", "localhost")
 	}
-	if o.DoltPort == 0 {
-		o.DoltPort = 3306
-	}
+	// Port default (3306) is applied in Apply() after the manifest is parsed
+	// so that m.Town.DoltPort can be used as a higher-priority fallback.
 	if o.DoltDB == "" {
-		o.DoltDB = envOrDefault("TOWN_CTL_DOLT_DB", "gas_town")
+		o.DoltDB = envOrDefault("TOWN_CTL_DOLT_DB", "gastown")
 	}
 	if o.DoltUser == "" {
 		o.DoltUser = envOrDefault("TOWN_CTL_DOLT_USER", "root")
@@ -74,21 +85,33 @@ func envOrDefault(key, def string) string {
 // Apply runs the full town-ctl apply pipeline for the manifest at path.
 // It writes to stderr on all errors and returns a non-nil error on any failure.
 // On --dry-run, no Dolt writes occur; the plan is printed to stdout.
-func Apply(manifestPath string, opts ApplyOptions) error {
+func Apply(manifestPath string, opts ApplyOptions) (retErr error) {
+	start := time.Now()
+	defer func() {
+		outcome := "ok"
+		if retErr != nil {
+			outcome = "error"
+		}
+		applyDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
+	}()
+
 	opts.applyDefaults()
 
 	// Step 1 — Read and parse the manifest.
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
+		applyErrorsTotal.WithLabelValues("parse").Inc()
 		return fmt.Errorf("%s: read: %w", manifestPath, err)
 	}
 	m, err := manifest.Parse(data)
 	if err != nil {
+		applyErrorsTotal.WithLabelValues("parse").Inc()
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 
 	// Step 2 — Validate manifest version.
 	if m.Version != "1" {
+		applyErrorsTotal.WithLabelValues("parse").Inc()
 		return fmt.Errorf("unsupported manifest version %q — upgrade town-ctl to ≥ 0.2.0", m.Version)
 	}
 
@@ -98,9 +121,11 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 	if len(m.Includes) > 0 {
 		included, err := ResolveIncludes(manifestDir, m.Includes)
 		if err != nil {
+			applyErrorsTotal.WithLabelValues("includes").Inc()
 			return fmt.Errorf("includes: %w", err)
 		}
 		if err := MergeIncludes(m, included); err != nil {
+			applyErrorsTotal.WithLabelValues("includes").Inc()
 			return fmt.Errorf("merge includes: %w", err)
 		}
 	}
@@ -108,12 +133,14 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 	// Step 4 — Apply --env overlay.
 	if opts.Env != "" {
 		if err := ApplyEnvOverlay(m, manifestDir, opts.Env); err != nil {
+			applyErrorsTotal.WithLabelValues("env_overlay").Inc()
 			return fmt.Errorf("env overlay: %w", err)
 		}
 	}
 
 	// Step 5 — Resolve secrets (env-var interpolation).
 	if err := ResolveSecrets(m); err != nil {
+		applyErrorsTotal.WithLabelValues("secrets").Inc()
 		return err
 	}
 
@@ -124,6 +151,7 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 
 	// Step 5b — Apply-time filesystem checks (CLAUDE.md path existence).
 	if err := manifest.ValidateApplyTime(m); err != nil {
+		applyErrorsTotal.WithLabelValues("validate").Inc()
 		return fmt.Errorf("%s: apply-time validation: %w", manifestPath, err)
 	}
 
@@ -133,6 +161,7 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 	// so that SQL generation stores the merged path in desired_custom_roles.
 	gtHome := os.ExpandEnv(m.Town.Home)
 	if err := MergeAndWriteExtendsChains(m, gtHome); err != nil {
+		applyErrorsTotal.WithLabelValues("extends_merge").Inc()
 		return fmt.Errorf("%s: extends merge: %w", manifestPath, err)
 	}
 
@@ -147,18 +176,34 @@ func Apply(manifestPath string, opts ApplyOptions) error {
 		return printDryRun(m, manifestPath)
 	}
 
-	// Step 6 — Connect to Dolt. Bound the initial ping to 10 s so a slow or
-	// misconfigured Dolt instance does not hang the terminal indefinitely.
+	// Step 6 — Connect to Dolt. Bound the initial ping to 10 s to prevent
+	// indefinite hangs on misconfigured or slow Dolt instances.
+	// When the caller provides a raw DSN, use it directly; otherwise use
+	// component-based connection, preferring m.Town.DoltPort over the 3306 default.
 	connectCtx, connectCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer connectCancel()
-	db, err := Connect(connectCtx, opts.DoltHost, opts.DoltPort, opts.DoltDB, opts.DoltUser, opts.DoltPassword)
+	var db *DB
+	if opts.DoltDSN != "" {
+		db, err = ConnectDSN(connectCtx, opts.DoltDSN)
+	} else {
+		port := opts.DoltPort
+		if port == 0 {
+			port = m.Town.DoltPort
+		}
+		if port == 0 {
+			port = 3306
+		}
+		db, err = Connect(connectCtx, opts.DoltHost, port, opts.DoltDB, opts.DoltUser, opts.DoltPassword)
+	}
 	if err != nil {
+		applyErrorsTotal.WithLabelValues("connect").Inc()
 		return err
 	}
 	defer db.Close()
 
 	// Steps 7–9 — Diff and write atomic transaction.
 	if err := applyTransaction(db, m, manifestPath); err != nil {
+		applyErrorsTotal.WithLabelValues("transaction").Inc()
 		return err
 	}
 
@@ -192,6 +237,9 @@ func applyTransaction(db *DB, m *manifest.TownManifest, manifestPath string) err
 	// Build the ordered statement list across all topology tables.
 	stmts := FullApplySQL(m)
 
+	// Record per-table, per-action diff op counts before executing.
+	recordDiffOps(stmts)
+
 	// Compute human-readable change count for the commit message.
 	addUpdateRemove := fmt.Sprintf("[%d stmts]", len(stmts))
 
@@ -208,6 +256,95 @@ func applyTransaction(db *DB, m *manifest.TownManifest, manifestPath string) err
 	allStmts = append(allStmts, TopologyLockUpsertSQL(BinaryVersion))
 
 	return db.ExecTransaction(allStmts)
+}
+
+// recordDiffOps increments topologyDiffOpsTotal for each statement in stmts.
+// It extracts the action ("insert", "update", "delete") and table name from
+// the first tokens of each SQL query using simple string parsing. Statements
+// that do not match a known DML pattern (e.g. SET, system upserts) are skipped.
+func recordDiffOps(stmts []Stmt) {
+	for _, s := range stmts {
+		action, table := parseSQLActionTable(s.Query)
+		if action == "" {
+			continue
+		}
+		topologyDiffOpsTotal.WithLabelValues(table, action).Inc()
+	}
+}
+
+// parseSQLActionTable extracts the DML action keyword and table name from a
+// SQL query string. It handles INSERT INTO, DELETE FROM, and UPDATE patterns.
+// Returns ("", "") when the query does not match a recognised DML pattern.
+func parseSQLActionTable(query string) (action, table string) {
+	// Normalise whitespace: collapse multiple spaces/newlines to single space.
+	norm := sqlNormaliseSpaces(query)
+	if len(norm) < 7 {
+		return "", ""
+	}
+	upper := sqlToUpper(norm)
+
+	switch {
+	case len(upper) > 12 && upper[:12] == "INSERT INTO ":
+		table = sqlFirstToken(norm[12:])
+		return "insert", table
+	case len(upper) > 12 && upper[:12] == "DELETE FROM ":
+		table = sqlFirstToken(norm[12:])
+		return "delete", table
+	case len(upper) > 7 && upper[:7] == "UPDATE ":
+		table = sqlFirstToken(norm[7:])
+		return "update", table
+	}
+	return "", ""
+}
+
+// sqlNormaliseSpaces replaces newlines and tabs with spaces and collapses
+// consecutive spaces to a single space, trimming leading/trailing whitespace.
+func sqlNormaliseSpaces(s string) string {
+	out := make([]byte, 0, len(s))
+	prevSpace := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\n' || c == '\t' || c == '\r' {
+			c = ' '
+		}
+		if c == ' ' {
+			if prevSpace {
+				continue
+			}
+			prevSpace = true
+		} else {
+			prevSpace = false
+		}
+		out = append(out, c)
+	}
+	// Trim leading space.
+	if len(out) > 0 && out[0] == ' ' {
+		out = out[1:]
+	}
+	return string(out)
+}
+
+// sqlToUpper returns an upper-cased copy of s (ASCII only; sufficient for SQL keywords).
+func sqlToUpper(s string) string {
+	b := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' {
+			c -= 32
+		}
+		b[i] = c
+	}
+	return string(b)
+}
+
+// sqlFirstToken returns the first whitespace-delimited token from s.
+func sqlFirstToken(s string) string {
+	for i := 0; i < len(s); i++ {
+		if s[i] == ' ' || s[i] == '\t' || s[i] == '(' || s[i] == '\n' {
+			return s[:i]
+		}
+	}
+	return s
 }
 
 // printDryRun computes and prints the planned topology changes to stdout.

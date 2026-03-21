@@ -27,6 +27,21 @@ type Stmt struct {
 	Args  []any
 }
 
+// ConnectDSN opens a MySQL-protocol connection to Dolt using a raw DSN string
+// and verifies connectivity. ctx bounds the initial ping.
+// The caller must call Close() when done.
+func ConnectDSN(ctx context.Context, dsn string) (*DB, error) {
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("dolt: connect: %w", err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("dolt: connect: %w", err)
+	}
+	return &DB{db}, nil
+}
+
 // Connect opens a MySQL-protocol connection to Dolt and verifies connectivity.
 // Dolt accepts standard MySQL driver DSN format. ctx bounds the initial ping;
 // use context.WithTimeout to prevent indefinite hangs on misconfigured hosts.

@@ -55,7 +55,8 @@ type RigReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is the main reconcile loop for Rig.
-func (r *RigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *RigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, retErr error) {
+	defer observeReconcile("rig", time.Now(), &retErr)
 	logger := log.FromContext(ctx).WithValues("rig", req.NamespacedName)
 
 	// 1. Fetch the Rig CR.

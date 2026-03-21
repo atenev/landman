@@ -71,7 +71,8 @@ type DoltInstanceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is the main reconcile loop for DoltInstance.
-func (r *DoltInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *DoltInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, retErr error) {
+	defer observeReconcile("doltinstance", time.Now(), &retErr)
 	logger := log.FromContext(ctx).WithValues("doltinstance", req.NamespacedName)
 
 	// 1. Fetch the DoltInstance CR.

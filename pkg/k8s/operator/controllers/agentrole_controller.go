@@ -61,7 +61,8 @@ type AgentRoleReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is the main reconcile loop for AgentRole.
-func (r *AgentRoleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *AgentRoleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, retErr error) {
+	defer observeReconcile("agentrole", time.Now(), &retErr)
 	logger := log.FromContext(ctx).WithValues("agentrole", req.NamespacedName)
 
 	// 1. Fetch the AgentRole CR.
