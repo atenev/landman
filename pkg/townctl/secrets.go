@@ -119,12 +119,12 @@ func expandManifest(m *manifest.TownManifest, fn func(*string)) {
 	fn(&m.Secrets.GitHubToken)
 	fn(&m.Secrets.File)
 	fn(&m.Defaults.MayorModel)
-	fn(&m.Defaults.PolekatModel)
+	fn(&m.Defaults.PolecatModel)
 
 	for i := range m.Rigs {
 		fn(&m.Rigs[i].Repo)
 		fn(&m.Rigs[i].Branch)
-		fn(&m.Rigs[i].Agents.PolekatModel)
+		fn(&m.Rigs[i].Agents.PolecatModel)
 		fn(&m.Rigs[i].Agents.MayorClaudeMD)
 	}
 

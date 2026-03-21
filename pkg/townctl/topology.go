@@ -94,7 +94,7 @@ func resolveAgentConfigRows(m *manifest.TownManifest) ([]agentConfigRow, []agent
 	if defaultMayorModel == "" {
 		defaultMayorModel = "claude-opus-4-6"
 	}
-	defaultPolecatModel := m.Defaults.PolekatModel
+	defaultPolecatModel := m.Defaults.PolecatModel
 	if defaultPolecatModel == "" {
 		defaultPolecatModel = "claude-sonnet-4-6"
 	}
@@ -111,7 +111,7 @@ func resolveAgentConfigRows(m *manifest.TownManifest) ([]agentConfigRow, []agent
 		if mayorModel == "" {
 			mayorModel = defaultMayorModel
 		}
-		polecatModel := rig.Agents.PolekatModel
+		polecatModel := rig.Agents.PolecatModel
 		if polecatModel == "" {
 			polecatModel = defaultPolecatModel
 		}

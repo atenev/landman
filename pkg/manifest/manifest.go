@@ -78,7 +78,7 @@ type TownAgents struct {
 // RigDefaults supplies values inherited by every rig unless overridden.
 type RigDefaults struct {
 	MayorModel   string `toml:"mayor_model"   json:"mayor_model"`
-	PolekatModel string `toml:"polecat_model" json:"polecat_model"`
+	PolecatModel string `toml:"polecat_model" json:"polecat_model"`
 	MaxPolecats  int    `toml:"max_polecats"  json:"max_polecats"  validate:"lte=30"`
 	// Cost is the default daily budget policy inherited by every rig that has no
 	// explicit [rig.cost] block. Cross-field validation in crossValidate.
@@ -143,8 +143,8 @@ type AgentConfig struct {
 	// MayorModel overrides [defaults].mayor_model for this rig.
 	MayorModel string `toml:"mayor_model" json:"mayor_model,omitempty"`
 
-	// PolekatModel overrides [defaults].polecat_model for this rig.
-	PolekatModel string `toml:"polecat_model" json:"polecat_model,omitempty"`
+	// PolecatModel overrides [defaults].polecat_model for this rig.
+	PolecatModel string `toml:"polecat_model" json:"polecat_model,omitempty"`
 
 	// MayorClaudeMD is the path to the Mayor's CLAUDE.md for this rig.
 	// Path interpolation applies (${GT_HOME}, etc.).

@@ -220,6 +220,12 @@ enabled = true
 	if m.Defaults.MaxPolecats != 20 {
 		t.Errorf("defaults.max_polecats = %d, want 20", m.Defaults.MaxPolecats)
 	}
+	if m.Defaults.PolecatModel != "claude-sonnet-4-6" {
+		t.Errorf("defaults.polecat_model = %q, want %q", m.Defaults.PolecatModel, "claude-sonnet-4-6")
+	}
+	if m.Rigs[0].Agents.PolecatModel != "claude-haiku-4-5-20251001" {
+		t.Errorf("rig.agents.polecat_model = %q, want %q", m.Rigs[0].Agents.PolecatModel, "claude-haiku-4-5-20251001")
+	}
 	if len(m.Rigs[0].Formulas) != 1 {
 		t.Errorf("expected 1 formula, got %d", len(m.Rigs[0].Formulas))
 	}
