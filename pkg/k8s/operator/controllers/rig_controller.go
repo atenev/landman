@@ -390,7 +390,10 @@ func (r *RigReconciler) setRigDisabled(ctx context.Context, dolt *doltClient, ri
 	); err != nil {
 		return fmt.Errorf("disable rig in desired_rigs: %w", err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // isRigStopped returns true when actual_rigs.status = 'stopped' for this rig.

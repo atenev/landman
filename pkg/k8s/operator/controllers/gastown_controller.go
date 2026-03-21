@@ -95,7 +95,9 @@ func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ 
 	if err != nil {
 		logger.Info("dolt not ready, requeuing", "reason", err.Error())
 		r.setCondition(&gt, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltNotReady", err.Error())
-		_ = r.Status().Update(ctx, &gt)
+		if err := r.Status().Update(ctx, &gt); err != nil {
+			logger.Error(err, "update status after dolt not ready")
+		}
 		r.emitEvent(&gt, corev1.EventTypeWarning, "DoltNotReady", err.Error())
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
@@ -106,7 +108,9 @@ func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ 
 	if err != nil {
 		logger.Error(err, "failed to sync to dolt")
 		r.setCondition(&gt, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltWriteFailed", err.Error())
-		_ = r.Status().Update(ctx, &gt)
+		if err := r.Status().Update(ctx, &gt); err != nil {
+			logger.Error(err, "update status after dolt write failed")
+		}
 		r.emitEvent(&gt, corev1.EventTypeWarning, "DoltWriteFailed", err.Error())
 		return ctrl.Result{}, err
 	}
@@ -116,7 +120,9 @@ func (r *GasTownReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ 
 		if err := r.reconcileSurveyor(ctx, &gt, dolt); err != nil {
 			logger.Error(err, "failed to reconcile surveyor deployment")
 			r.setCondition(&gt, "SurveyorRunning", metav1.ConditionFalse, "ReconcileError", err.Error())
-			_ = r.Status().Update(ctx, &gt)
+			if err := r.Status().Update(ctx, &gt); err != nil {
+				logger.Error(err, "update status after surveyor reconcile failed")
+			}
 			r.emitEvent(&gt, corev1.EventTypeWarning, "SurveyorError", err.Error())
 			return ctrl.Result{}, err
 		}
@@ -498,7 +504,10 @@ func (r *GasTownReconciler) deleteFromDolt(
 		return fmt.Errorf("delete desired_town: %w", err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // SetupWithManager registers the reconciler with the controller-runtime Manager.

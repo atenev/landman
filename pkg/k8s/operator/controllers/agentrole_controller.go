@@ -95,7 +95,9 @@ func (r *AgentRoleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			fmt.Sprintf("AgentRole name %q is reserved for a built-in role; skipping reconcile", ar.Name))
 		r.setCondition(&ar, "DesiredTopologyInSync", metav1.ConditionFalse, "ReservedName",
 			fmt.Sprintf("name %q is reserved", ar.Name))
-		_ = r.Status().Update(ctx, &ar)
+		if err := r.Status().Update(ctx, &ar); err != nil {
+			logger.Error(err, "update status after reserved name check")
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -108,7 +110,9 @@ func (r *AgentRoleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err != nil {
 		logger.Info("dolt not ready, requeuing", "reason", err.Error())
 		r.setCondition(&ar, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltNotReady", err.Error())
-		_ = r.Status().Update(ctx, &ar)
+		if err := r.Status().Update(ctx, &ar); err != nil {
+			logger.Error(err, "update status after dolt not ready")
+		}
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 	defer dolt.Close()
@@ -118,7 +122,9 @@ func (r *AgentRoleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err != nil {
 		logger.Error(err, "failed to sync to dolt")
 		r.setCondition(&ar, "DesiredTopologyInSync", metav1.ConditionFalse, "DoltWriteFailed", err.Error())
-		_ = r.Status().Update(ctx, &ar)
+		if err := r.Status().Update(ctx, &ar); err != nil {
+			logger.Error(err, "update status after dolt write failed")
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -291,7 +297,10 @@ func (r *AgentRoleReconciler) deleteFromDolt(
 		return fmt.Errorf("delete desired_custom_roles: %w", err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // StartStatusSync launches a goroutine that periodically polls actual_custom_roles
