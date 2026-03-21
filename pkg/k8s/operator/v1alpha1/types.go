@@ -164,6 +164,27 @@ type GasTownStatus struct {
 	// (read from actual_topology).
 	// +optional
 	LastReconcileAt *metav1.Time `json:"lastReconcileAt,omitempty"`
+
+	// ConvergenceScore is the weighted convergence fraction in [0.0, 1.0]
+	// computed by the status-sync loop every 30 s. A value of 1.0 means all
+	// desired resources are running and fresh. Zero means the fleet is entirely
+	// unconverged. -1 means no actual_topology data is available yet.
+	// +optional
+	// +kubebuilder:validation:Minimum=-1
+	// +kubebuilder:validation:Maximum=1
+	ConvergenceScore float64 `json:"convergenceScore,omitempty"`
+
+	// NonConverged lists human-readable descriptions of non-converged resources
+	// from the last status-sync, mirroring ScoreResult.NonConverged. Capped at
+	// 20 entries to bound CRD object size. Empty when ConvergenceScore == 1.0.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	NonConverged []string `json:"nonConverged,omitempty"`
+
+	// LastConvergenceAt is the timestamp of the last successful convergence score
+	// computation. Nil if no actual_topology data has been read yet.
+	// +optional
+	LastConvergenceAt *metav1.Time `json:"lastConvergenceAt,omitempty"`
 }
 
 // GasTownList contains a list of GasTown CRs.

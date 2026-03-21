@@ -5,6 +5,8 @@
 //
 //	town-ctl apply [--file town.toml] [--dry-run] [--env NAME=VALUE...]
 //	               [--dolt-dsn DSN]
+//	town-ctl status [--dolt-dsn DSN] [--output text|json] [--rig NAME]
+//	                [--no-color]
 //	town-ctl version
 //
 // The apply command:
@@ -18,9 +20,12 @@
 //  8. Checks [town.agents].surveyor and launches/verifies the process.
 //
 // Exit codes: 0 = success, 1 = error (human-readable message on stderr).
+// For status: 0 = fully converged, 1 = error, 2 = not fully converged.
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -41,7 +46,7 @@ func main() {
 
 func run(args []string) int {
 	if len(args) == 0 {
-		slog.Error("missing command", "usage", "town-ctl <apply|version> [flags]")
+		slog.Error("missing command", "usage", "town-ctl <apply|status|version> [flags]")
 		return 1
 	}
 	switch args[0] {
@@ -51,11 +56,13 @@ func run(args []string) int {
 			return 1
 		}
 		return 0
+	case "status":
+		return statusCmd(args[1:])
 	case "version":
 		fmt.Printf("%s\n", townctl.BinaryVersion)
 		return 0
 	default:
-		slog.Error("unknown command", "command", args[0], "usage", "town-ctl <apply|version> [flags]")
+		slog.Error("unknown command", "command", args[0], "usage", "town-ctl <apply|status|version> [flags]")
 		return 1
 	}
 }
@@ -112,4 +119,76 @@ func applyCmd(args []string) error {
 		DryRun:  f.dryRun,
 		DoltDSN: dsn,
 	})
+}
+
+type statusFlags struct {
+	doltDSN string
+	output  string
+	rigs    stringSlice
+	noColor bool
+}
+
+// statusCmd implements the town-ctl status subcommand.
+// Exit codes: 0 = fully converged, 1 = error, 2 = not fully converged.
+func statusCmd(args []string) int {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	var f statusFlags
+	fs.StringVar(&f.doltDSN, "dolt-dsn", "", "Dolt MySQL DSN (env: GT_DOLT_DSN)")
+	fs.StringVar(&f.output, "output", "text", "output format: text or json")
+	fs.Var(&f.rigs, "rig", "filter to a single rig name (may be repeated)")
+	fs.BoolVar(&f.noColor, "no-color", false, "disable ANSI colour codes")
+
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	dsn := f.doltDSN
+	if dsn == "" {
+		dsn = os.Getenv("GT_DOLT_DSN")
+	}
+	if dsn == "" {
+		slog.Error("status: Dolt DSN is required; set GT_DOLT_DSN or pass --dolt-dsn")
+		return 1
+	}
+
+	opts := townctl.StatusOptions{
+		DoltDSN: dsn,
+		Output:  f.output,
+		Rigs:    []string(f.rigs),
+		NoColor: f.noColor,
+	}
+
+	result, err := townctl.Status(dsn, opts)
+	if err != nil {
+		slog.Error("status failed", "error", err.Error())
+		return 1
+	}
+
+	switch f.output {
+	case "json":
+		b, err := townctl.FormatStatusJSON(result)
+		if err != nil {
+			slog.Error("status: marshal json", "error", err.Error())
+			return 1
+		}
+		var indented bytes.Buffer
+		if err := json.Indent(&indented, b, "", "  "); err != nil {
+			fmt.Fprintf(os.Stdout, "%s\n", b)
+		} else {
+			fmt.Fprintf(os.Stdout, "%s\n", indented.String())
+		}
+	default:
+		fmtOpts := townctl.FormatOpts{NoColor: f.noColor}
+		fmt.Print(townctl.FormatStatusText(result, fmtOpts))
+	}
+
+	// Exit 2 when any rig is not fully converged.
+	for _, rig := range result.Rigs {
+		if rig.Score < 1.0 {
+			return 2
+		}
+	}
+	return 0
 }

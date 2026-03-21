@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gasv1alpha1 "github.com/tenev/dgt/pkg/k8s/operator/v1alpha1"
+	"github.com/tenev/dgt/pkg/surveyor"
 )
 
 const (
@@ -412,7 +413,8 @@ func (r *GasTownReconciler) runStatusSync(ctx context.Context) error {
 	return nil
 }
 
-// patchStatusFromActual reads actual_town and patches GasTown status.
+// patchStatusFromActual reads actual_town and actual_topology tables, computes
+// the convergence score, and patches GasTown status.
 func (r *GasTownReconciler) patchStatusFromActual(
 	ctx context.Context,
 	dolt *doltClient,
@@ -439,12 +441,227 @@ LIMIT 1`
 		gt.Status.LastReconcileAt = &t
 	}
 
-	if !timeEqual(gt.Status.LastReconcileAt, base.Status.LastReconcileAt) {
+	// Compute convergence score from topology tables. Errors are non-fatal:
+	// log and continue with existing status fields.
+	logger := log.FromContext(ctx)
+	desired, actual, err := readTopologyForStatus(ctx, dolt.db)
+	if err != nil {
+		logger.Info("convergence score unavailable", "reason", err.Error())
+		r.setCondition(gt, "ActualTopologyAvailable", metav1.ConditionFalse,
+			"SurveyorNotStarted", err.Error())
+	} else {
+		result := surveyor.ComputeScore(desired, actual,
+			surveyor.DefaultProductionConfig(), time.Now())
+
+		gt.Status.ConvergenceScore = result.Score
+		gt.Status.NonConverged = cappedSlice(result.NonConverged, 20)
+		t := metav1.Now()
+		gt.Status.LastConvergenceAt = &t
+
+		r.setCondition(gt, "ActualTopologyAvailable", metav1.ConditionTrue,
+			"TopologyRead", "actual_topology tables readable")
+
+		if result.Score == 1.0 {
+			r.setCondition(gt, "FleetConverged", metav1.ConditionTrue,
+				"FullyConverged", "all desired resources are running")
+		} else {
+			msg := fmt.Sprintf("non-converged: %s", summariseNonConverged(result.NonConverged))
+			r.setCondition(gt, "FleetConverged", metav1.ConditionFalse,
+				"PartialConvergence", msg)
+		}
+	}
+
+	statusChanged := !timeEqual(gt.Status.LastReconcileAt, base.Status.LastReconcileAt) ||
+		gt.Status.ConvergenceScore != base.Status.ConvergenceScore ||
+		!timeEqual(gt.Status.LastConvergenceAt, base.Status.LastConvergenceAt)
+
+	if statusChanged {
 		if err := r.Status().Update(ctx, gt); err != nil {
 			return fmt.Errorf("update status: %w", err)
 		}
 	}
 	return nil
+}
+
+// readTopologyForStatus reads desired_* and actual_* tables from Dolt and
+// returns the topology snapshots needed for convergence scoring.
+func readTopologyForStatus(
+	ctx context.Context,
+	db *sql.DB,
+) (surveyor.DesiredTopology, surveyor.ActualTopology, error) {
+	var desired surveyor.DesiredTopology
+	var actual surveyor.ActualTopology
+
+	// Read desired_rigs.
+	{
+		rows, err := db.QueryContext(ctx,
+			`SELECT name, enabled, max_polecats FROM desired_rigs`)
+		if err != nil {
+			return desired, actual, fmt.Errorf("read desired_rigs: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var dr surveyor.DesiredRig
+			if err := rows.Scan(&dr.Name, &dr.Enabled, &dr.MaxPolecats); err != nil {
+				return desired, actual, fmt.Errorf("scan desired_rigs: %w", err)
+			}
+			desired.Rigs = append(desired.Rigs, dr)
+		}
+		if err := rows.Err(); err != nil {
+			return desired, actual, err
+		}
+	}
+
+	// Read desired_agent_config for witness_enabled per rig.
+	{
+		rows, err := db.QueryContext(ctx,
+			`SELECT rig_name, role FROM desired_agent_config`)
+		if err == nil {
+			defer rows.Close()
+			witnessEnabled := make(map[string]bool)
+			for rows.Next() {
+				var rigName, role string
+				if err := rows.Scan(&rigName, &role); err != nil {
+					continue
+				}
+				if role == "witness" {
+					witnessEnabled[rigName] = true
+				}
+			}
+			for i := range desired.Rigs {
+				desired.Rigs[i].WitnessEnabled = witnessEnabled[desired.Rigs[i].Name]
+			}
+		}
+	}
+
+	// Read desired_custom_roles + desired_rig_custom_roles.
+	{
+		rows, err := db.QueryContext(ctx, `
+SELECT r.name, r.scope, COALESCE(j.rig_name, '__town__') AS rig_name, 0
+FROM desired_custom_roles r
+LEFT JOIN desired_rig_custom_roles j
+  ON r.name = j.role_name AND r.scope = 'rig'
+WHERE r.scope = 'town' OR j.rig_name IS NOT NULL`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var dcr surveyor.DesiredCustomRole
+				if err := rows.Scan(&dcr.Name, &dcr.Scope, &dcr.RigName, &dcr.InstanceIndex); err != nil {
+					continue
+				}
+				desired.CustomRoles = append(desired.CustomRoles, dcr)
+			}
+		}
+	}
+
+	// Read desired_formulas.
+	{
+		rows, err := db.QueryContext(ctx,
+			`SELECT rig_name, formula_name FROM desired_formulas`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var df surveyor.DesiredFormula
+				if err := rows.Scan(&df.RigName, &df.Name); err != nil {
+					continue
+				}
+				desired.Formulas = append(desired.Formulas, df)
+			}
+		}
+	}
+
+	// Read actual_rigs.
+	{
+		rows, err := db.QueryContext(ctx,
+			`SELECT name, enabled, status, last_seen FROM actual_rigs`)
+		if err != nil {
+			return desired, actual, fmt.Errorf("read actual_rigs: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var ar surveyor.RigState
+			if err := rows.Scan(&ar.Name, &ar.Enabled, &ar.Status, &ar.LastSeen); err != nil {
+				return desired, actual, fmt.Errorf("scan actual_rigs: %w", err)
+			}
+			actual.Rigs = append(actual.Rigs, ar)
+		}
+		if err := rows.Err(); err != nil {
+			return desired, actual, err
+		}
+	}
+
+	// Read actual_agent_config.
+	{
+		rows, err := db.QueryContext(ctx,
+			`SELECT rig_name, role, status, last_seen FROM actual_agent_config`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var a surveyor.AgentState
+				if err := rows.Scan(&a.RigName, &a.Role, &a.Status, &a.LastSeen); err != nil {
+					continue
+				}
+				actual.Agents = append(actual.Agents, a)
+			}
+		}
+	}
+
+	// Read actual_worktrees.
+	{
+		rows, err := db.QueryContext(ctx,
+			`SELECT rig_name, status, last_seen FROM actual_worktrees`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var wt surveyor.WorktreeState
+				if err := rows.Scan(&wt.RigName, &wt.Status, &wt.LastSeen); err != nil {
+					continue
+				}
+				actual.Worktrees = append(actual.Worktrees, wt)
+			}
+		}
+	}
+
+	// Read actual_custom_roles.
+	{
+		rows, err := db.QueryContext(ctx,
+			`SELECT rig_name, role_name, instance_index, status, last_seen FROM actual_custom_roles`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var cr surveyor.CustomRoleState
+				if err := rows.Scan(&cr.RigName, &cr.RoleName, &cr.InstanceIndex, &cr.Status, &cr.LastSeen); err != nil {
+					continue
+				}
+				actual.CustomRoles = append(actual.CustomRoles, cr)
+			}
+		}
+	}
+
+	return desired, actual, nil
+}
+
+// cappedSlice returns s[:n] when len(s) > n, appending "... and N more" as the
+// last entry. Returns s unchanged when len(s) <= n.
+func cappedSlice(s []string, n int) []string {
+	if len(s) <= n {
+		return s
+	}
+	out := make([]string, n)
+	copy(out, s[:n-1])
+	out[n-1] = fmt.Sprintf("... and %d more", len(s)-(n-1))
+	return out
+}
+
+// summariseNonConverged returns the first entry (or a count if empty).
+func summariseNonConverged(nonConverged []string) string {
+	if len(nonConverged) == 0 {
+		return "unknown"
+	}
+	if len(nonConverged) == 1 {
+		return nonConverged[0]
+	}
+	return fmt.Sprintf("%s (and %d more)", nonConverged[0], len(nonConverged)-1)
 }
 
 // handleDeletion removes the desired_town Dolt row for the GasTown and then
