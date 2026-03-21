@@ -93,6 +93,7 @@ func ComputePatrolBeads(rows []PatrolRow) []PatrolBead {
 			beads = append(beads, warnBead(row, pct))
 		}
 	}
+	recordPatrolRun(rows, beads)
 	return beads
 }
 
