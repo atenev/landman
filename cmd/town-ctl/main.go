@@ -29,7 +29,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	// Register the MySQL driver used for Dolt's MySQL-compatible endpoint.
@@ -472,18 +474,24 @@ func ensureSurveyor(m *manifest.TownManifest) error {
 }
 
 // processAlive returns true if the pid file exists and the process is alive.
+// It uses Signal(0) to probe process existence without sending an actual signal.
+// Gas Town is Linux-only; this approach also works on macOS for testing.
 func processAlive(pidFile string) bool {
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		return false
 	}
 	pidStr := strings.TrimSpace(string(data))
-	if pidStr == "" {
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil || pid <= 0 {
 		return false
 	}
-	// Check via /proc/<pid> (Linux). Non-Linux platforms may not have /proc.
-	_, err = os.Stat(fmt.Sprintf("/proc/%s", pidStr))
-	return err == nil
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	// Signal(0) probes process existence without sending an actual signal.
+	return proc.Signal(syscall.Signal(0)) == nil
 }
 
 // ── Dolt read helpers ─────────────────────────────────────────────────────────
