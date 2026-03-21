@@ -91,7 +91,6 @@ func (d *DB) ExecTransaction(stmts []Stmt) error {
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("dolt: commit: %w", err)
 	}
 	return nil
