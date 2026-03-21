@@ -1,6 +1,8 @@
 package townctl_test
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,20 @@ import (
 	"github.com/tenev/dgt/pkg/manifest"
 	"github.com/tenev/dgt/pkg/townctl"
 )
+
+// unusedPort returns a TCP port that is not currently in use. It binds a
+// listener on an OS-assigned ephemeral port (:0), reads the assigned port, and
+// immediately closes the listener so the caller can use the port number.
+func unusedPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("unusedPort: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	return port
+}
 
 // writeManifest writes a manifest TOML file into a temp directory and returns
 // the full path. Helper for Apply pipeline tests.
@@ -215,8 +231,9 @@ home = "/opt/gt"
 func TestApply_DoltDSN_ConnectionFailure_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	path := writeManifest(t, dir, "town.toml", minManifest)
+	port := unusedPort(t)
 	err := townctl.Apply(path, townctl.ApplyOptions{
-		DoltDSN: "root@tcp(127.0.0.1:19997)/gastown?parseTime=true",
+		DoltDSN: fmt.Sprintf("root@tcp(127.0.0.1:%d)/gastown?parseTime=true", port),
 	})
 	if err == nil {
 		t.Fatal("expected connection error from DoltDSN path, got nil")
@@ -237,8 +254,9 @@ func TestApply_DoltDSN_EmptyComponentFields(t *testing.T) {
 	// If applyDefaults erroneously filled in "localhost" as DoltHost, the
 	// component-based Connect path would be taken instead of ConnectDSN. Either
 	// way the server is unreachable, but the test confirms no panic or nil error.
+	port := unusedPort(t)
 	err := townctl.Apply(path, townctl.ApplyOptions{
-		DoltDSN: "root@tcp(127.0.0.1:19996)/gastown?parseTime=true",
+		DoltDSN: fmt.Sprintf("root@tcp(127.0.0.1:%d)/gastown?parseTime=true", port),
 		// DoltHost, DoltPort, DoltDB, DoltUser all zero.
 	})
 	if err == nil {
@@ -251,11 +269,12 @@ func TestApply_DoltDSN_EmptyComponentFields(t *testing.T) {
 func TestApply_DoltConnectionFailure_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	path := writeManifest(t, dir, "town.toml", minManifest)
-	// Point to a non-existent Dolt server; Connect should fail fast.
+	// Point to a port that was free at bind time; Connect should fail fast.
+	port := unusedPort(t)
 	err := townctl.Apply(path, townctl.ApplyOptions{
 		DryRun:   false,
 		DoltHost: "127.0.0.1",
-		DoltPort: 19999, // port unlikely to be in use
+		DoltPort: port,
 		DoltDB:   "gas_town",
 		DoltUser: "root",
 	})
