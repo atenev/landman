@@ -175,10 +175,11 @@ func applyTransaction(db *DB, m *manifest.TownManifest, manifestPath string) err
 		manifestPath, m.Version, addUpdateRemove)
 
 	// Prepend SET @dolt_transaction_commit_message and append lock upsert.
-	msgStmt := fmt.Sprintf(
-		"SET @dolt_transaction_commit_message = '%s';",
-		escapeSQLString(commitMsg))
-	allStmts := append([]string{msgStmt}, stmts...)
+	msgStmt := Stmt{
+		Query: "SET @dolt_transaction_commit_message = ?;",
+		Args:  []any{commitMsg},
+	}
+	allStmts := append([]Stmt{msgStmt}, stmts...)
 	allStmts = append(allStmts, TopologyLockUpsertSQL(BinaryVersion))
 
 	return db.ExecTransaction(allStmts)

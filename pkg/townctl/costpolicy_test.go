@@ -189,9 +189,19 @@ func TestApplySQL_FirstStatementIsVersionsUpsert(t *testing.T) {
 	if len(stmts) < 1 {
 		t.Fatal("expected at least 1 statement")
 	}
-	if !strings.Contains(stmts[0], "desired_topology_versions") ||
-		!strings.Contains(stmts[0], "desired_cost_policy") {
-		t.Errorf("first statement must upsert desired_topology_versions for desired_cost_policy, got: %s", stmts[0])
+	if !strings.Contains(stmts[0].Query, "desired_topology_versions") {
+		t.Errorf("first statement must upsert desired_topology_versions, got: %s", stmts[0].Query)
+	}
+	// Table name "desired_cost_policy" is passed as an arg, not embedded in query.
+	found := false
+	for _, a := range stmts[0].Args {
+		if a == "desired_cost_policy" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("first statement must reference desired_cost_policy in args, got: %v", stmts[0].Args)
 	}
 }
 
@@ -199,8 +209,8 @@ func TestApplySQL_DeleteAll_WhenNoPolicies(t *testing.T) {
 	m := mustParse(t, noPolicy)
 	stmts := townctl.ApplySQL(m)
 	last := stmts[len(stmts)-1]
-	if last != "DELETE FROM desired_cost_policy;" {
-		t.Errorf("expected full delete when no policies, got: %s", last)
+	if last.Query != "DELETE FROM desired_cost_policy;" || len(last.Args) != 0 {
+		t.Errorf("expected full delete when no policies, got: %s (args: %v)", last.Query, last.Args)
 	}
 }
 
@@ -226,11 +236,33 @@ branch = "main"
 	if len(stmts) != 3 {
 		t.Fatalf("expected 3 statements, got %d: %v", len(stmts), stmts)
 	}
-	if !strings.Contains(stmts[1], "backend") || !strings.Contains(stmts[1], "usd") {
-		t.Errorf("expected backend upsert statement, got: %s", stmts[1])
+	// stmts[1] upserts the backend row: rig_name="backend" and budget_type="usd" are args.
+	upsertArgs := stmts[1].Args
+	hasBackend := false
+	hasUSD := false
+	for _, a := range upsertArgs {
+		if a == "backend" {
+			hasBackend = true
+		}
+		if a == "usd" {
+			hasUSD = true
+		}
 	}
-	if !strings.Contains(stmts[2], "NOT IN") || !strings.Contains(stmts[2], "backend") {
-		t.Errorf("expected cleanup NOT IN 'backend', got: %s", stmts[2])
+	if !hasBackend || !hasUSD {
+		t.Errorf("expected backend upsert args to contain 'backend' and 'usd', got: %v", upsertArgs)
+	}
+	// stmts[2] is the cleanup: query has NOT IN, and "backend" is in args.
+	if !strings.Contains(stmts[2].Query, "NOT IN") {
+		t.Errorf("expected cleanup NOT IN in query, got: %s", stmts[2].Query)
+	}
+	cleanupHasBackend := false
+	for _, a := range stmts[2].Args {
+		if a == "backend" {
+			cleanupHasBackend = true
+		}
+	}
+	if !cleanupHasBackend {
+		t.Errorf("expected cleanup args to contain 'backend', got: %v", stmts[2].Args)
 	}
 }
 
@@ -265,8 +297,18 @@ branch = "main"
 		t.Fatalf("expected 4 statements, got %d", len(stmts))
 	}
 	cleanup := stmts[3]
-	if !strings.Contains(cleanup, "rig-a") || !strings.Contains(cleanup, "rig-b") {
-		t.Errorf("cleanup should list both rigs in NOT IN, got: %s", cleanup)
+	hasRigA := false
+	hasRigB := false
+	for _, a := range cleanup.Args {
+		if a == "rig-a" {
+			hasRigA = true
+		}
+		if a == "rig-b" {
+			hasRigB = true
+		}
+	}
+	if !hasRigA || !hasRigB {
+		t.Errorf("cleanup should list both rigs in NOT IN args, got: %v", cleanup.Args)
 	}
 }
 

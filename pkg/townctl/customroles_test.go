@@ -569,14 +569,25 @@ branch = "main"
 	if len(stmts) < 1 {
 		t.Fatal("expected at least 1 statement")
 	}
-	if !strings.Contains(stmts[0], "desired_topology_versions") {
-		t.Errorf("first statement must upsert desired_topology_versions, got: %s", stmts[0])
+	if !strings.Contains(stmts[0].Query, "desired_topology_versions") {
+		t.Errorf("first statement must upsert desired_topology_versions, got: %s", stmts[0].Query)
 	}
-	if !strings.Contains(stmts[0], "desired_custom_roles") {
-		t.Errorf("first statement must reference desired_custom_roles, got: %s", stmts[0])
+	// Table names are passed as args in parameterized queries.
+	hasCustomRoles := false
+	hasRigCustomRoles := false
+	for _, a := range stmts[0].Args {
+		if a == "desired_custom_roles" {
+			hasCustomRoles = true
+		}
+		if a == "desired_rig_custom_roles" {
+			hasRigCustomRoles = true
+		}
 	}
-	if !strings.Contains(stmts[0], "desired_rig_custom_roles") {
-		t.Errorf("first statement must reference desired_rig_custom_roles, got: %s", stmts[0])
+	if !hasCustomRoles {
+		t.Errorf("first statement must reference desired_custom_roles in args, got: %v", stmts[0].Args)
+	}
+	if !hasRigCustomRoles {
+		t.Errorf("first statement must reference desired_rig_custom_roles in args, got: %v", stmts[0].Args)
 	}
 }
 
@@ -603,14 +614,18 @@ branch = "main"
 	stmts := townctl.CustomRolesApplySQL(m)
 	var upsertFound bool
 	for _, s := range stmts {
-		if strings.Contains(s, "INSERT INTO desired_custom_roles") &&
-			strings.Contains(s, "reviewer") {
-			upsertFound = true
-			break
+		if strings.Contains(s.Query, "INSERT INTO desired_custom_roles") {
+			// "reviewer" is passed as an arg, not embedded in the query.
+			for _, a := range s.Args {
+				if a == "reviewer" {
+					upsertFound = true
+					break
+				}
+			}
 		}
 	}
 	if !upsertFound {
-		t.Errorf("expected INSERT INTO desired_custom_roles for reviewer; statements: %v", stmts)
+		t.Errorf("expected INSERT INTO desired_custom_roles with arg 'reviewer'; statements: %v", stmts)
 	}
 }
 
@@ -635,18 +650,21 @@ repo   = "/srv/r"
 branch = "main"
 `)
 	stmts := townctl.CustomRolesApplySQL(m)
-	// The DELETE statement must include NOT IN with the desired role names.
+	// The DELETE statement must include NOT IN with "reviewer" as an arg.
 	var deleteFound bool
 	for _, s := range stmts {
-		if strings.Contains(s, "DELETE FROM desired_custom_roles") &&
-			strings.Contains(s, "NOT IN") &&
-			strings.Contains(s, "reviewer") {
-			deleteFound = true
-			break
+		if strings.Contains(s.Query, "DELETE FROM desired_custom_roles") &&
+			strings.Contains(s.Query, "NOT IN") {
+			for _, a := range s.Args {
+				if a == "reviewer" {
+					deleteFound = true
+					break
+				}
+			}
 		}
 	}
 	if !deleteFound {
-		t.Errorf("expected DELETE FROM desired_custom_roles NOT IN (reviewer); statements: %v", stmts)
+		t.Errorf("expected DELETE FROM desired_custom_roles NOT IN with arg 'reviewer'; statements: %v", stmts)
 	}
 }
 
@@ -660,13 +678,13 @@ branch = "main"
 	stmts := townctl.CustomRolesApplySQL(m)
 	var deleteAll bool
 	for _, s := range stmts {
-		if s == "DELETE FROM desired_custom_roles;" {
+		if s.Query == "DELETE FROM desired_custom_roles;" && len(s.Args) == 0 {
 			deleteAll = true
 			break
 		}
 	}
 	if !deleteAll {
-		t.Errorf("expected 'DELETE FROM desired_custom_roles;' when no roles; statements: %v", stmts)
+		t.Errorf("expected 'DELETE FROM desired_custom_roles;' with no args when no roles; statements: %v", stmts)
 	}
 }
 
@@ -696,15 +714,25 @@ branch = "main"
 	stmts := townctl.CustomRolesApplySQL(m)
 	var rigUpsertFound bool
 	for _, s := range stmts {
-		if strings.Contains(s, "INSERT INTO desired_rig_custom_roles") &&
-			strings.Contains(s, "backend") &&
-			strings.Contains(s, "reviewer") {
-			rigUpsertFound = true
-			break
+		if strings.Contains(s.Query, "INSERT INTO desired_rig_custom_roles") {
+			hasBackend := false
+			hasReviewer := false
+			for _, a := range s.Args {
+				if a == "backend" {
+					hasBackend = true
+				}
+				if a == "reviewer" {
+					hasReviewer = true
+				}
+			}
+			if hasBackend && hasReviewer {
+				rigUpsertFound = true
+				break
+			}
 		}
 	}
 	if !rigUpsertFound {
-		t.Errorf("expected INSERT INTO desired_rig_custom_roles for (backend, reviewer); statements: %v", stmts)
+		t.Errorf("expected INSERT INTO desired_rig_custom_roles with args (backend, reviewer); statements: %v", stmts)
 	}
 }
 
@@ -734,8 +762,8 @@ branch = "main"
 	stmts := townctl.CustomRolesApplySQL(m)
 	var deleteFound bool
 	for _, s := range stmts {
-		if strings.Contains(s, "DELETE FROM desired_rig_custom_roles") &&
-			strings.Contains(s, "NOT IN") {
+		if strings.Contains(s.Query, "DELETE FROM desired_rig_custom_roles") &&
+			strings.Contains(s.Query, "NOT IN") {
 			deleteFound = true
 			break
 		}
@@ -755,13 +783,13 @@ branch = "main"
 	stmts := townctl.CustomRolesApplySQL(m)
 	var deleteAll bool
 	for _, s := range stmts {
-		if s == "DELETE FROM desired_rig_custom_roles;" {
+		if s.Query == "DELETE FROM desired_rig_custom_roles;" && len(s.Args) == 0 {
 			deleteAll = true
 			break
 		}
 	}
 	if !deleteAll {
-		t.Errorf("expected 'DELETE FROM desired_rig_custom_roles;' when no opt-ins; statements: %v", stmts)
+		t.Errorf("expected 'DELETE FROM desired_rig_custom_roles;' with no args when no opt-ins; statements: %v", stmts)
 	}
 }
 

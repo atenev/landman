@@ -27,8 +27,8 @@ type TableSchemaVersion struct {
 	Version int
 }
 
-// TopologyVersionsUpsert returns a single SQL statement that upserts one row
-// into desired_topology_versions for each entry in tables. The statement uses
+// TopologyVersionsUpsert returns a single Stmt that upserts one row into
+// desired_topology_versions for each entry in tables. The statement uses
 // BinaryVersion as the written_by value.
 //
 // Per ADR-0003 Decision 2, this statement MUST be the first SQL statement in
@@ -38,31 +38,27 @@ type TableSchemaVersion struct {
 // Callers provide one TableSchemaVersion per topology table being written.
 // Example:
 //
-//	stmts := []string{
+//	stmts := []Stmt{
 //	    TopologyVersionsUpsert([]TableSchemaVersion{
 //	        {Table: "desired_rigs", Version: 1},
 //	        {Table: "desired_agent_config", Version: 1},
 //	    }),
 //	    // ... table-specific upserts follow ...
 //	}
-func TopologyVersionsUpsert(tables []TableSchemaVersion) string {
+func TopologyVersionsUpsert(tables []TableSchemaVersion) Stmt {
 	values := make([]string, len(tables))
+	args := make([]any, 0, len(tables)*3)
 	for i, tv := range tables {
-		values[i] = fmt.Sprintf("('%s', %d, '%s')",
-			escapeSQLIdentifier(tv.Table), tv.Version, escapeSQLIdentifier(BinaryVersion))
+		values[i] = "(?, ?, ?)"
+		args = append(args, tv.Table, tv.Version, BinaryVersion)
 	}
-	return fmt.Sprintf(
-		"INSERT INTO desired_topology_versions (table_name, schema_version, written_by)"+
-			" VALUES %s"+
-			" ON DUPLICATE KEY UPDATE schema_version = VALUES(schema_version),"+
-			" written_by = VALUES(written_by), written_at = CURRENT_TIMESTAMP;",
-		strings.Join(values, ", "),
-	)
-}
-
-// escapeSQLIdentifier escapes single quotes in SQL string literals.
-// Identical to escapeSQLString but reserved for identifier-like values
-// (table names, written_by strings) rather than arbitrary user data.
-func escapeSQLIdentifier(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
+	return Stmt{
+		Query: fmt.Sprintf(
+			"INSERT INTO desired_topology_versions (table_name, schema_version, written_by)"+
+				" VALUES %s"+
+				" ON DUPLICATE KEY UPDATE schema_version = VALUES(schema_version),"+
+				" written_by = VALUES(written_by), written_at = CURRENT_TIMESTAMP;",
+			strings.Join(values, ", ")),
+		Args: args,
+	}
 }

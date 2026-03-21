@@ -338,16 +338,16 @@ func TestDoltInteg_TransactionRollback(t *testing.T) {
 	//   2. Executes an intentionally bad SQL statement (syntax error).
 	//   3. Would upsert desired_rig_custom_roles (never reached).
 	const sentinelRole = "rollback-test-sentinel-99"
-	stmts := []string{
-		fmt.Sprintf(
-			"INSERT INTO desired_custom_roles"+
-				" (name, scope, lifespan, trigger_type, claude_md_path, parent_role, max_instances)"+
-				" VALUES ('%s', 'rig', 'ephemeral', 'manual', '/tmp/x.md', 'witness', 1)"+
+	stmts := []townctl.Stmt{
+		{
+			Query: "INSERT INTO desired_custom_roles" +
+				" (name, scope, lifespan, trigger_type, claude_md_path, parent_role, max_instances)" +
+				" VALUES (?, 'rig', 'ephemeral', 'manual', '/tmp/x.md', 'witness', 1)" +
 				" ON DUPLICATE KEY UPDATE scope = VALUES(scope);",
-			sentinelRole,
-		),
+			Args: []any{sentinelRole},
+		},
 		// Bad statement — causes rollback.
-		"THIS IS NOT VALID SQL !!!;",
+		{Query: "THIS IS NOT VALID SQL !!!;"},
 	}
 
 	err := db.ExecTransaction(stmts)
@@ -376,12 +376,13 @@ func TestDoltInteg_FKConstraint_DesiredRigCustomRoles(t *testing.T) {
 	db := doltIntegSkip(t)
 
 	const undefinedRole = "fk-test-nonexistent-role-99999"
-	stmt := fmt.Sprintf(
-		"INSERT INTO desired_rig_custom_roles (rig_name, role_name, enabled)"+
-			" VALUES ('backend', '%s', TRUE);",
-		undefinedRole,
-	)
-	err := db.ExecTransaction([]string{stmt})
+	err := db.ExecTransaction([]townctl.Stmt{
+		{
+			Query: "INSERT INTO desired_rig_custom_roles (rig_name, role_name, enabled)" +
+				" VALUES ('backend', ?, TRUE);",
+			Args: []any{undefinedRole},
+		},
+	})
 	if err == nil {
 		t.Fatal("expected FK violation error when inserting undefined role_name, got nil")
 	}

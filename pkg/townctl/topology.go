@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	desiredRigsSchemaVersion        = 1
-	desiredAgentConfigSchemaVersion  = 1
-	desiredFormulasSchemaVersion     = 1
+	desiredRigsSchemaVersion       = 1
+	desiredAgentConfigSchemaVersion = 1
+	desiredFormulasSchemaVersion    = 1
 )
 
 // TopologyApplySQL returns the ordered SQL statements that bring the core
@@ -31,8 +31,8 @@ const (
 //  5. DELETE removed agent_config rows
 //  6. UPSERT desired_formulas rows
 //  7. DELETE removed formula rows
-func TopologyApplySQL(m *manifest.TownManifest) []string {
-	stmts := make([]string, 0, 10+len(m.Rigs)*5)
+func TopologyApplySQL(m *manifest.TownManifest) []Stmt {
+	stmts := make([]Stmt, 0, 10+len(m.Rigs)*5)
 
 	// 1. ADR-0003: versions upsert first.
 	stmts = append(stmts, TopologyVersionsUpsert([]TableSchemaVersion{
@@ -153,83 +153,88 @@ func resolveAgentConfigRows(m *manifest.TownManifest) ([]agentConfigRow, []agent
 	return rows, keys
 }
 
-func upsertRigRow(rig manifest.RigSpec) string {
+func upsertRigRow(rig manifest.RigSpec) Stmt {
 	enabled := 0
 	if rig.Enabled {
 		enabled = 1
 	}
-	return fmt.Sprintf(
-		"INSERT INTO desired_rigs (name, repo, branch, enabled)"+
-			" VALUES ('%s', '%s', '%s', %d)"+
-			" ON DUPLICATE KEY UPDATE"+
+	return Stmt{
+		Query: "INSERT INTO desired_rigs (name, repo, branch, enabled)" +
+			" VALUES (?, ?, ?, ?)" +
+			" ON DUPLICATE KEY UPDATE" +
 			" repo = VALUES(repo), branch = VALUES(branch), enabled = VALUES(enabled);",
-		escapeSQLString(rig.Name),
-		escapeSQLString(rig.Repo),
-		escapeSQLString(rig.Branch),
-		enabled,
-	)
+		Args: []any{rig.Name, rig.Repo, rig.Branch, enabled},
+	}
 }
 
-func deleteRemovedRigs(rigNames []string) string {
+func deleteRemovedRigs(rigNames []string) Stmt {
 	if len(rigNames) == 0 {
-		return "DELETE FROM desired_rigs;"
+		return Stmt{Query: "DELETE FROM desired_rigs;"}
 	}
-	quoted := make([]string, len(rigNames))
+	placeholders := strings.Repeat("?, ", len(rigNames))
+	placeholders = placeholders[:len(placeholders)-2]
+	args := make([]any, len(rigNames))
 	for i, n := range rigNames {
-		quoted[i] = fmt.Sprintf("'%s'", escapeSQLString(n))
+		args[i] = n
 	}
-	return fmt.Sprintf(
-		"DELETE FROM desired_rigs WHERE name NOT IN (%s);",
-		strings.Join(quoted, ", "),
-	)
+	return Stmt{
+		Query: fmt.Sprintf("DELETE FROM desired_rigs WHERE name NOT IN (%s);", placeholders),
+		Args:  args,
+	}
 }
 
-func upsertAgentConfigRow(r agentConfigRow) string {
+func upsertAgentConfigRow(r agentConfigRow) Stmt {
 	enabled := 0
 	if r.Enabled {
 		enabled = 1
 	}
-	model := nullOrQuoted(r.Model)
-	claudeMD := nullOrQuoted(r.ClaudeMDPath)
-	maxPolecats := "NULL"
-	if r.MaxPolecats > 0 {
-		maxPolecats = fmt.Sprintf("%d", r.MaxPolecats)
+	var model, claudeMD any
+	if r.Model != "" {
+		model = r.Model
 	}
-	return fmt.Sprintf(
-		"INSERT INTO desired_agent_config (rig_name, role, enabled, model, max_polecats, claude_md_path)"+
-			" VALUES ('%s', '%s', %d, %s, %s, %s)"+
-			" ON DUPLICATE KEY UPDATE"+
-			" enabled = VALUES(enabled), model = VALUES(model),"+
+	if r.ClaudeMDPath != "" {
+		claudeMD = r.ClaudeMDPath
+	}
+	var maxPolecats any
+	if r.MaxPolecats > 0 {
+		maxPolecats = r.MaxPolecats
+	}
+	return Stmt{
+		Query: "INSERT INTO desired_agent_config (rig_name, role, enabled, model, max_polecats, claude_md_path)" +
+			" VALUES (?, ?, ?, ?, ?, ?)" +
+			" ON DUPLICATE KEY UPDATE" +
+			" enabled = VALUES(enabled), model = VALUES(model)," +
 			" max_polecats = VALUES(max_polecats), claude_md_path = VALUES(claude_md_path);",
-		escapeSQLString(r.RigName),
-		escapeSQLString(r.Role),
-		enabled,
-		model,
-		maxPolecats,
-		claudeMD,
-	)
+		Args: []any{r.RigName, r.Role, enabled, model, maxPolecats, claudeMD},
+	}
 }
 
-func deleteRemovedAgentConfig(keys []agentConfigKey, rigNames []string) string {
+func deleteRemovedAgentConfig(keys []agentConfigKey, rigNames []string) Stmt {
 	// Rows for deleted rigs are cascade-deleted. For remaining rigs, delete
 	// any (rig, role) pairs not in the desired set.
 	if len(keys) == 0 || len(rigNames) == 0 {
-		return "DELETE FROM desired_agent_config WHERE 1=0;" // no-op
+		return Stmt{Query: "DELETE FROM desired_agent_config WHERE 1=0;"} // no-op
 	}
-	pairs := make([]string, len(keys))
-	for i, k := range keys {
-		pairs[i] = fmt.Sprintf("('%s', '%s')", escapeSQLString(k.rigName), escapeSQLString(k.role))
+	rigPlaceholders := strings.Repeat("?, ", len(rigNames))
+	rigPlaceholders = rigPlaceholders[:len(rigPlaceholders)-2]
+
+	pairPlaceholders := strings.Repeat("(?, ?), ", len(keys))
+	pairPlaceholders = pairPlaceholders[:len(pairPlaceholders)-2]
+
+	args := make([]any, 0, len(rigNames)+len(keys)*2)
+	for _, n := range rigNames {
+		args = append(args, n)
 	}
-	quotedRigs := make([]string, len(rigNames))
-	for i, n := range rigNames {
-		quotedRigs[i] = fmt.Sprintf("'%s'", escapeSQLString(n))
+	for _, k := range keys {
+		args = append(args, k.rigName, k.role)
 	}
-	return fmt.Sprintf(
-		"DELETE FROM desired_agent_config"+
-			" WHERE rig_name IN (%s) AND (rig_name, role) NOT IN (%s);",
-		strings.Join(quotedRigs, ", "),
-		strings.Join(pairs, ", "),
-	)
+	return Stmt{
+		Query: fmt.Sprintf(
+			"DELETE FROM desired_agent_config"+
+				" WHERE rig_name IN (%s) AND (rig_name, role) NOT IN (%s);",
+			rigPlaceholders, pairPlaceholders),
+		Args: args,
+	}
 }
 
 // formulaRow is one (rig_name, formula_name) pair for desired_formulas.
@@ -257,39 +262,46 @@ func resolveFormulaRows(m *manifest.TownManifest) ([]formulaRow, []formulaKey) {
 	return rows, keys
 }
 
-func upsertFormulaRow(r formulaRow) string {
-	return fmt.Sprintf(
-		"INSERT INTO desired_formulas (rig_name, name, schedule)"+
-			" VALUES ('%s', '%s', '%s')"+
+func upsertFormulaRow(r formulaRow) Stmt {
+	return Stmt{
+		Query: "INSERT INTO desired_formulas (rig_name, name, schedule)" +
+			" VALUES (?, ?, ?)" +
 			" ON DUPLICATE KEY UPDATE schedule = VALUES(schedule);",
-		escapeSQLString(r.RigName),
-		escapeSQLString(r.Name),
-		escapeSQLString(r.Schedule),
-	)
+		Args: []any{r.RigName, r.Name, r.Schedule},
+	}
 }
 
-func deleteRemovedFormulas(keys []formulaKey, rigNames []string) string {
+func deleteRemovedFormulas(keys []formulaKey, rigNames []string) Stmt {
 	if len(rigNames) == 0 {
-		return "DELETE FROM desired_formulas WHERE 1=0;" // no-op
+		return Stmt{Query: "DELETE FROM desired_formulas WHERE 1=0;"} // no-op
 	}
-	quotedRigs := make([]string, len(rigNames))
+	rigPlaceholders := strings.Repeat("?, ", len(rigNames))
+	rigPlaceholders = rigPlaceholders[:len(rigPlaceholders)-2]
+	rigArgs := make([]any, len(rigNames))
 	for i, n := range rigNames {
-		quotedRigs[i] = fmt.Sprintf("'%s'", escapeSQLString(n))
+		rigArgs[i] = n
 	}
 	if len(keys) == 0 {
-		return fmt.Sprintf(
-			"DELETE FROM desired_formulas WHERE rig_name IN (%s);",
-			strings.Join(quotedRigs, ", "),
-		)
+		return Stmt{
+			Query: fmt.Sprintf(
+				"DELETE FROM desired_formulas WHERE rig_name IN (%s);",
+				rigPlaceholders),
+			Args: rigArgs,
+		}
 	}
-	pairs := make([]string, len(keys))
-	for i, k := range keys {
-		pairs[i] = fmt.Sprintf("('%s', '%s')", escapeSQLString(k.rigName), escapeSQLString(k.name))
+	pairPlaceholders := strings.Repeat("(?, ?), ", len(keys))
+	pairPlaceholders = pairPlaceholders[:len(pairPlaceholders)-2]
+
+	args := make([]any, 0, len(rigNames)+len(keys)*2)
+	args = append(args, rigArgs...)
+	for _, k := range keys {
+		args = append(args, k.rigName, k.name)
 	}
-	return fmt.Sprintf(
-		"DELETE FROM desired_formulas"+
-			" WHERE rig_name IN (%s) AND (rig_name, name) NOT IN (%s);",
-		strings.Join(quotedRigs, ", "),
-		strings.Join(pairs, ", "),
-	)
+	return Stmt{
+		Query: fmt.Sprintf(
+			"DELETE FROM desired_formulas"+
+				" WHERE rig_name IN (%s) AND (rig_name, name) NOT IN (%s);",
+			rigPlaceholders, pairPlaceholders),
+		Args: args,
+	}
 }

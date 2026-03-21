@@ -30,8 +30,8 @@ type TopologyOp struct {
 //
 // The individual generators each prepend their own desired_topology_versions
 // upsert. Callers wrap this list in BEGIN / COMMIT.
-func FullApplySQL(m *manifest.TownManifest) []string {
-	var stmts []string
+func FullApplySQL(m *manifest.TownManifest) []Stmt {
+	var stmts []Stmt
 	stmts = append(stmts, TopologyApplySQL(m)...)
 	stmts = append(stmts, CustomRolesApplySQL(m)...)
 	stmts = append(stmts, ApplySQL(m)...)

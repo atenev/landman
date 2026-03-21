@@ -19,6 +19,13 @@ type DB struct {
 	*sql.DB
 }
 
+// Stmt is a SQL statement with optional query arguments for parameterized
+// execution. Use ? placeholders in Query and supply matching Args values.
+type Stmt struct {
+	Query string
+	Args  []any
+}
+
 // Connect opens a MySQL-protocol connection to Dolt and verifies connectivity.
 // Dolt accepts standard MySQL driver DSN format. The caller must call Close()
 // when done.
@@ -40,15 +47,15 @@ func Connect(host string, port int, dbName, user, password string) (*DB, error) 
 // the transaction is rolled back and the failing statement is included in the
 // returned error. Per ADR-0003, the first statement must always be the
 // desired_topology_versions upsert.
-func (d *DB) ExecTransaction(stmts []string) error {
+func (d *DB) ExecTransaction(stmts []Stmt) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return fmt.Errorf("dolt: begin transaction: %w", err)
 	}
 	for _, stmt := range stmts {
-		if _, err := tx.Exec(stmt); err != nil {
+		if _, err := tx.Exec(stmt.Query, stmt.Args...); err != nil {
 			_ = tx.Rollback()
-			return fmt.Errorf("dolt: %s: %w", stmt, err)
+			return fmt.Errorf("dolt: %s: %w", stmt.Query, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -62,8 +69,7 @@ func (d *DB) ExecTransaction(stmts []string) error {
 // attached to the next COMMIT. This must be called inside a transaction,
 // before Commit.
 func SetCommitMessage(tx *sql.Tx, msg string) error {
-	_, err := tx.Exec(fmt.Sprintf("SET @dolt_transaction_commit_message = '%s';",
-		escapeSQLString(msg)))
+	_, err := tx.Exec("SET @dolt_transaction_commit_message = ?", msg)
 	return err
 }
 
@@ -93,15 +99,14 @@ func CheckTopologyLock(db *DB, holder string) error {
 	return nil
 }
 
-// TopologyLockUpsertSQL returns a SQL statement that claims the advisory
-// topology write lock for holder. Include this as the last statement in the
-// ExecTransaction stmts slice so the lock is updated atomically with the
-// desired-state writes.
-func TopologyLockUpsertSQL(holder string) string {
-	return fmt.Sprintf(
-		"INSERT INTO desired_topology_lock (singleton, holder, acquired_at)"+
-			" VALUES ('X', '%s', NOW())"+
+// TopologyLockUpsertSQL returns a Stmt that claims the advisory topology write
+// lock for holder. Include this as the last statement in the ExecTransaction
+// stmts slice so the lock is updated atomically with the desired-state writes.
+func TopologyLockUpsertSQL(holder string) Stmt {
+	return Stmt{
+		Query: "INSERT INTO desired_topology_lock (singleton, holder, acquired_at)" +
+			" VALUES ('X', ?, NOW())" +
 			" ON DUPLICATE KEY UPDATE holder = VALUES(holder), acquired_at = VALUES(acquired_at);",
-		escapeSQLIdentifier(holder),
-	)
+		Args: []any{holder},
+	}
 }

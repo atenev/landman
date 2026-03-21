@@ -7,6 +7,28 @@ import (
 	"github.com/tenev/dgt/pkg/townctl"
 )
 
+// joinStmtQueries joins the Query fields of a []Stmt slice for substring checks
+// against SQL structure (table names, statement types). Values are in Args, not Query.
+func joinStmtQueries(stmts []townctl.Stmt) string {
+	qs := make([]string, len(stmts))
+	for i, s := range stmts {
+		qs[i] = s.Query
+	}
+	return strings.Join(qs, "\n")
+}
+
+// stmtArgsContain reports whether any Stmt in stmts has an arg equal to val.
+func stmtArgsContain(stmts []townctl.Stmt, val any) bool {
+	for _, s := range stmts {
+		for _, a := range s.Args {
+			if a == val {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ─── FullApplySQL ─────────────────────────────────────────────────────────────
 
 func TestFullApplySQL_ContainsVersionsUpsert(t *testing.T) {
@@ -18,7 +40,7 @@ func TestFullApplySQL_ContainsVersionsUpsert(t *testing.T) {
 	// Multiple version upserts are expected (one per SQL generator).
 	any := false
 	for _, s := range stmts {
-		if strings.Contains(s, "desired_topology_versions") {
+		if strings.Contains(s.Query, "desired_topology_versions") {
 			any = true
 			break
 		}
@@ -31,7 +53,7 @@ func TestFullApplySQL_ContainsVersionsUpsert(t *testing.T) {
 func TestFullApplySQL_ContainsAllTopologyTables(t *testing.T) {
 	m := mustParse(t, noPolicy)
 	stmts := townctl.FullApplySQL(m)
-	all := strings.Join(stmts, "\n")
+	all := joinStmtQueries(stmts)
 	for _, table := range []string{
 		"desired_rigs",
 		"desired_agent_config",
@@ -63,9 +85,10 @@ enabled = true
 `
 	m := mustParse(t, toml)
 	stmts := townctl.TopologyApplySQL(m)
-	all := strings.Join(stmts, "\n")
-	if !strings.Contains(all, "backend") {
-		t.Errorf("expected 'backend' rig in SQL output")
+	all := joinStmtQueries(stmts)
+	// "backend" is a value (arg), not in the query template.
+	if !stmtArgsContain(stmts, "backend") {
+		t.Errorf("expected 'backend' rig in SQL args")
 	}
 	if !strings.Contains(all, "INSERT INTO desired_rigs") {
 		t.Errorf("expected INSERT INTO desired_rigs statement")
@@ -82,7 +105,7 @@ home = "/opt/gt"
 `
 	m := mustParse(t, toml)
 	stmts := townctl.TopologyApplySQL(m)
-	all := strings.Join(stmts, "\n")
+	all := joinStmtQueries(stmts)
 	if !strings.Contains(all, "DELETE FROM desired_rigs") {
 		t.Errorf("expected DELETE FROM desired_rigs when no rigs, got:\n%s", all)
 	}
@@ -109,12 +132,13 @@ branch = "main"
 `
 	m := mustParse(t, toml)
 	stmts := townctl.TopologyApplySQL(m)
-	all := strings.Join(stmts, "\n")
+	all := joinStmtQueries(stmts)
 	if !strings.Contains(all, "INSERT INTO desired_agent_config") {
 		t.Errorf("expected INSERT INTO desired_agent_config")
 	}
-	if !strings.Contains(all, "'mayor'") {
-		t.Errorf("expected 'mayor' role in agent config statements")
+	// "mayor" is a value arg, not embedded in the query template.
+	if !stmtArgsContain(stmts, "mayor") {
+		t.Errorf("expected 'mayor' role in agent config args")
 	}
 }
 
@@ -137,12 +161,12 @@ branch = "main"
 `
 	m := mustParse(t, toml)
 	stmts := townctl.TopologyApplySQL(m)
-	all := strings.Join(stmts, "\n")
+	all := joinStmtQueries(stmts)
 	if !strings.Contains(all, "INSERT INTO desired_formulas") {
 		t.Errorf("expected INSERT INTO desired_formulas")
 	}
-	if !strings.Contains(all, "nightly") {
-		t.Errorf("expected formula name 'nightly'")
+	if !stmtArgsContain(stmts, "nightly") {
+		t.Errorf("expected formula name 'nightly' in args")
 	}
 }
 
@@ -176,12 +200,12 @@ scope = "rig"
 `
 	m := mustParse(t, toml)
 	stmts := townctl.CustomRolesApplySQL(m)
-	all := strings.Join(stmts, "\n")
+	all := joinStmtQueries(stmts)
 	if !strings.Contains(all, "INSERT INTO desired_custom_roles") {
 		t.Errorf("expected INSERT INTO desired_custom_roles")
 	}
-	if !strings.Contains(all, "auditor") {
-		t.Errorf("expected role name 'auditor' in statements")
+	if !stmtArgsContain(stmts, "auditor") {
+		t.Errorf("expected role name 'auditor' in statement args")
 	}
 }
 

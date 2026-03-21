@@ -241,11 +241,11 @@ func DiffCustomRoles(
 // If the diff against current is empty (pass nil for both current slices), the
 // function still generates the full UPSERT+DELETE set. Use DiffCustomRoles to
 // check for a no-op before calling this.
-func CustomRolesApplySQL(m *manifest.TownManifest) []string {
+func CustomRolesApplySQL(m *manifest.TownManifest) []Stmt {
 	desired := ResolveCustomRoles(m)
 	desiredRig := ResolveRigCustomRoles(m)
 
-	stmts := make([]string, 0, 3+len(desired)+len(desiredRig))
+	stmts := make([]Stmt, 0, 3+len(desired)+len(desiredRig))
 
 	// 1. ADR-0003: versions upsert first.
 	stmts = append(stmts, TopologyVersionsUpsert([]TableSchemaVersion{
@@ -272,89 +272,88 @@ func CustomRolesApplySQL(m *manifest.TownManifest) []string {
 	return stmts
 }
 
-func upsertCustomRoleRow(r CustomRoleRow) string {
-	// NULL for optional string fields when empty.
-	model := nullOrQuoted(r.Model)
-	triggerSchedule := nullOrQuoted(r.TriggerSchedule)
-	triggerEvent := nullOrQuoted(r.TriggerEvent)
-	reportsTo := nullOrQuoted(r.ReportsTo)
-	extendsRole := nullOrQuoted(r.ExtendsRole)
-
-	return fmt.Sprintf(
-		"INSERT INTO desired_custom_roles"+
-			" (name, description, scope, lifespan, trigger_type, trigger_schedule,"+
-			" trigger_event, claude_md_path, model, parent_role, reports_to, max_instances, extends_role)"+
-			" VALUES ('%s', '%s', '%s', '%s', '%s', %s, %s, '%s', %s, '%s', %s, %d, %s)"+
-			" ON DUPLICATE KEY UPDATE"+
-			" description = VALUES(description), scope = VALUES(scope),"+
-			" lifespan = VALUES(lifespan), trigger_type = VALUES(trigger_type),"+
-			" trigger_schedule = VALUES(trigger_schedule),"+
-			" trigger_event = VALUES(trigger_event),"+
-			" claude_md_path = VALUES(claude_md_path), model = VALUES(model),"+
-			" parent_role = VALUES(parent_role), reports_to = VALUES(reports_to),"+
+func upsertCustomRoleRow(r CustomRoleRow) Stmt {
+	// Convert empty optional strings to nil (SQL NULL).
+	var model, triggerSchedule, triggerEvent, reportsTo, extendsRole any
+	if r.Model != "" {
+		model = r.Model
+	}
+	if r.TriggerSchedule != "" {
+		triggerSchedule = r.TriggerSchedule
+	}
+	if r.TriggerEvent != "" {
+		triggerEvent = r.TriggerEvent
+	}
+	if r.ReportsTo != "" {
+		reportsTo = r.ReportsTo
+	}
+	if r.ExtendsRole != "" {
+		extendsRole = r.ExtendsRole
+	}
+	return Stmt{
+		Query: "INSERT INTO desired_custom_roles" +
+			" (name, description, scope, lifespan, trigger_type, trigger_schedule," +
+			" trigger_event, claude_md_path, model, parent_role, reports_to, max_instances, extends_role)" +
+			" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)" +
+			" ON DUPLICATE KEY UPDATE" +
+			" description = VALUES(description), scope = VALUES(scope)," +
+			" lifespan = VALUES(lifespan), trigger_type = VALUES(trigger_type)," +
+			" trigger_schedule = VALUES(trigger_schedule)," +
+			" trigger_event = VALUES(trigger_event)," +
+			" claude_md_path = VALUES(claude_md_path), model = VALUES(model)," +
+			" parent_role = VALUES(parent_role), reports_to = VALUES(reports_to)," +
 			" max_instances = VALUES(max_instances), extends_role = VALUES(extends_role);",
-		escapeSQLString(r.Name),
-		escapeSQLString(r.Description),
-		escapeSQLString(r.Scope),
-		escapeSQLString(r.Lifespan),
-		escapeSQLString(r.TriggerType),
-		triggerSchedule,
-		triggerEvent,
-		escapeSQLString(r.ClaudeMDPath),
-		model,
-		escapeSQLString(r.ParentRole),
-		reportsTo,
-		r.MaxInstances,
-		extendsRole,
-	)
+		Args: []any{
+			r.Name, r.Description, r.Scope, r.Lifespan, r.TriggerType,
+			triggerSchedule, triggerEvent, r.ClaudeMDPath, model, r.ParentRole,
+			reportsTo, r.MaxInstances, extendsRole,
+		},
+	}
 }
 
-func upsertRigCustomRoleRow(r RigCustomRoleRow) string {
-	return fmt.Sprintf(
-		"INSERT INTO desired_rig_custom_roles (rig_name, role_name, enabled)"+
-			" VALUES ('%s', '%s', TRUE)"+
+func upsertRigCustomRoleRow(r RigCustomRoleRow) Stmt {
+	return Stmt{
+		Query: "INSERT INTO desired_rig_custom_roles (rig_name, role_name, enabled)" +
+			" VALUES (?, ?, TRUE)" +
 			" ON DUPLICATE KEY UPDATE enabled = TRUE;",
-		escapeSQLString(r.RigName),
-		escapeSQLString(r.RoleName),
-	)
+		Args: []any{r.RigName, r.RoleName},
+	}
 }
 
-func deleteRemovedCustomRoles(desired []CustomRoleRow) string {
+func deleteRemovedCustomRoles(desired []CustomRoleRow) Stmt {
 	if len(desired) == 0 {
-		return "DELETE FROM desired_custom_roles;"
+		return Stmt{Query: "DELETE FROM desired_custom_roles;"}
 	}
-	quoted := make([]string, len(desired))
+	placeholders := strings.Repeat("?, ", len(desired))
+	placeholders = placeholders[:len(placeholders)-2]
+	args := make([]any, len(desired))
 	for i, row := range desired {
-		quoted[i] = fmt.Sprintf("'%s'", escapeSQLString(row.Name))
+		args[i] = row.Name
 	}
-	return fmt.Sprintf(
-		"DELETE FROM desired_custom_roles WHERE name NOT IN (%s);",
-		strings.Join(quoted, ", "),
-	)
+	return Stmt{
+		Query: fmt.Sprintf(
+			"DELETE FROM desired_custom_roles WHERE name NOT IN (%s);",
+			placeholders),
+		Args: args,
+	}
 }
 
-func deleteRemovedRigCustomRoles(desired []RigCustomRoleRow) string {
+func deleteRemovedRigCustomRoles(desired []RigCustomRoleRow) Stmt {
 	if len(desired) == 0 {
-		return "DELETE FROM desired_rig_custom_roles;"
+		return Stmt{Query: "DELETE FROM desired_rig_custom_roles;"}
 	}
-	pairs := make([]string, len(desired))
-	for i, row := range desired {
-		pairs[i] = fmt.Sprintf("('%s', '%s')",
-			escapeSQLString(row.RigName), escapeSQLString(row.RoleName))
+	pairPlaceholders := strings.Repeat("(?, ?), ", len(desired))
+	pairPlaceholders = pairPlaceholders[:len(pairPlaceholders)-2]
+	args := make([]any, 0, len(desired)*2)
+	for _, row := range desired {
+		args = append(args, row.RigName, row.RoleName)
 	}
-	return fmt.Sprintf(
-		"DELETE FROM desired_rig_custom_roles WHERE (rig_name, role_name) NOT IN (%s);",
-		strings.Join(pairs, ", "),
-	)
-}
-
-// nullOrQuoted returns "NULL" for an empty string and a single-quoted,
-// escaped SQL string literal for a non-empty value.
-func nullOrQuoted(s string) string {
-	if s == "" {
-		return "NULL"
+	return Stmt{
+		Query: fmt.Sprintf(
+			"DELETE FROM desired_rig_custom_roles WHERE (rig_name, role_name) NOT IN (%s);",
+			pairPlaceholders),
+		Args: args,
 	}
-	return fmt.Sprintf("'%s'", escapeSQLString(s))
 }
 
 // FormatCustomRolesDryRun renders a CustomRolesDiff as human-readable text for

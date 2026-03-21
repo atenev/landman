@@ -386,7 +386,7 @@ func applyWrite(m *manifest.TownManifest, dsn string) error {
 	}
 
 	// Build the full ordered statement list.
-	var allStmts []string
+	var allStmts []townctl.Stmt
 	allStmts = append(allStmts, townctl.TopologyApplySQL(m)...)
 	allStmts = append(allStmts, townctl.ApplySQL(m)...)        // cost policy
 	allStmts = append(allStmts, townctl.CustomRolesApplySQL(m)...)
@@ -399,8 +399,8 @@ func applyWrite(m *manifest.TownManifest, dsn string) error {
 	defer func() { _ = tx.Rollback() }()
 
 	for _, stmt := range allStmts {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("exec statement: %w\nSQL: %s", err, stmt)
+		if _, err := tx.ExecContext(ctx, stmt.Query, stmt.Args...); err != nil {
+			return fmt.Errorf("exec statement: %w\nSQL: %s", err, stmt.Query)
 		}
 	}
 

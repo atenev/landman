@@ -85,9 +85,9 @@ func costPolicyToRow(rigName string, p manifest.CostPolicy) CostPolicyRow {
 //  3. DELETE rows for rigs no longer in the desired set
 //
 // The caller wraps these in BEGIN / COMMIT and executes them against Dolt.
-func ApplySQL(m *manifest.TownManifest) []string {
+func ApplySQL(m *manifest.TownManifest) []Stmt {
 	desired := ResolveCostPolicies(m)
-	stmts := make([]string, 0, 2+len(desired))
+	stmts := make([]Stmt, 0, 2+len(desired))
 
 	// 1. ADR-0003: versions row first in every transaction touching this table.
 	stmts = append(stmts, TopologyVersionsUpsert([]TableSchemaVersion{
@@ -106,36 +106,35 @@ func ApplySQL(m *manifest.TownManifest) []string {
 	return stmts
 }
 
-func upsertRow(r CostPolicyRow) string {
-	return fmt.Sprintf(
-		"INSERT INTO desired_cost_policy (rig_name, budget_type, daily_budget, warn_at_pct)"+
-			" VALUES ('%s', '%s', %.4f, %d)"+
-			" ON DUPLICATE KEY UPDATE budget_type = VALUES(budget_type),"+
+func upsertRow(r CostPolicyRow) Stmt {
+	return Stmt{
+		Query: "INSERT INTO desired_cost_policy (rig_name, budget_type, daily_budget, warn_at_pct)" +
+			" VALUES (?, ?, ?, ?)" +
+			" ON DUPLICATE KEY UPDATE budget_type = VALUES(budget_type)," +
 			" daily_budget = VALUES(daily_budget), warn_at_pct = VALUES(warn_at_pct);",
-		escapeSQLString(r.RigName), r.BudgetType, r.DailyBudget, r.WarnAtPct,
-	)
+		Args: []any{r.RigName, r.BudgetType, r.DailyBudget, r.WarnAtPct},
+	}
 }
 
-// cleanupRows returns a DELETE statement that removes any desired_cost_policy
-// rows not present in the desired set. When desired is empty (all rigs are
-// unrestricted) all rows are deleted.
-func cleanupRows(desired []CostPolicyRow) string {
+// cleanupRows returns a Stmt that removes any desired_cost_policy rows not
+// present in the desired set. When desired is empty (all rigs are unrestricted)
+// all rows are deleted.
+func cleanupRows(desired []CostPolicyRow) Stmt {
 	if len(desired) == 0 {
-		return "DELETE FROM desired_cost_policy;"
+		return Stmt{Query: "DELETE FROM desired_cost_policy;"}
 	}
-	quoted := make([]string, len(desired))
+	placeholders := strings.Repeat("?, ", len(desired))
+	placeholders = placeholders[:len(placeholders)-2]
+	args := make([]any, len(desired))
 	for i, row := range desired {
-		quoted[i] = fmt.Sprintf("'%s'", escapeSQLString(row.RigName))
+		args[i] = row.RigName
 	}
-	return fmt.Sprintf(
-		"DELETE FROM desired_cost_policy WHERE rig_name NOT IN (%s);",
-		strings.Join(quoted, ", "),
-	)
-}
-
-// escapeSQLString escapes single quotes in SQL string literals.
-func escapeSQLString(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
+	return Stmt{
+		Query: fmt.Sprintf(
+			"DELETE FROM desired_cost_policy WHERE rig_name NOT IN (%s);",
+			placeholders),
+		Args: args,
+	}
 }
 
 // DiffOp describes a single planned operation on desired_cost_policy.
