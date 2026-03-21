@@ -72,21 +72,14 @@ func (v *RigValidator) Handle(ctx context.Context, req admission.Request) admiss
 	}
 
 	// Rule 5: townRef resolves to an existing GasTown.
-	gastownList := &gasv1alpha1.GasTownList{}
-	if err := v.List(ctx, gastownList); err != nil {
-		return admission.Errored(http.StatusInternalServerError,
-			fmt.Errorf("list gastowns: %w", err))
-	}
-	found := false
-	for i := range gastownList.Items {
-		if gastownList.Items[i].Name == rig.Spec.TownRef {
-			found = true
-			break
+	gastown := &gasv1alpha1.GasTown{}
+	if err := v.Get(ctx, client.ObjectKey{Name: rig.Spec.TownRef}, gastown); err != nil {
+		if apierrors.IsNotFound(err) {
+			return admission.Denied(fmt.Sprintf(
+				"spec.townRef: GasTown %q not found in cluster", rig.Spec.TownRef))
 		}
-	}
-	if !found {
-		return admission.Denied(fmt.Sprintf(
-			"spec.townRef: GasTown %q not found in cluster", rig.Spec.TownRef))
+		return admission.Errored(http.StatusInternalServerError,
+			fmt.Errorf("get gastown %q: %w", rig.Spec.TownRef, err))
 	}
 
 	return admission.Allowed("")

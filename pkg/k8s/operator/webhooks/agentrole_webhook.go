@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -15,6 +16,10 @@ import (
 
 	gasv1alpha1 "github.com/tenev/dgt/pkg/k8s/operator/v1alpha1"
 )
+
+// cronRE matches a valid 5-field cron expression (minute hour dom month dow).
+// Mirrors the pattern in pkg/manifest/validate.go.
+var cronRE = regexp.MustCompile(`^(\*|[0-9,\-\*\/]+) (\*|[0-9,\-\*\/]+) (\*|[0-9,\-\*\/]+) (\*|[0-9,\-\*\/]+) (\*|[0-9,\-\*\/]+)$`)
 
 // reservedRoleNames is the canonical list of built-in Gas Town agent roles.
 // AgentRole CRs may not use any of these names (ADR-0004 D4).
@@ -83,6 +88,11 @@ func (v *AgentRoleValidator) Handle(ctx context.Context, req admission.Request) 
 		if ar.Spec.Trigger.Schedule == "" {
 			return admission.Denied(
 				"spec.trigger.schedule: required when spec.trigger.type is 'schedule'")
+		}
+		if !cronRE.MatchString(ar.Spec.Trigger.Schedule) {
+			return admission.Denied(fmt.Sprintf(
+				"spec.trigger.schedule: %q is not a valid 5-field cron expression",
+				ar.Spec.Trigger.Schedule))
 		}
 	case "event":
 		if ar.Spec.Trigger.Event == "" {
