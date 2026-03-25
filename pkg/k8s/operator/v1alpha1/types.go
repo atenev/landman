@@ -41,6 +41,19 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	return nil
 }
 
+// ─── Condition types ──────────────────────────────────────────────────────────
+
+const (
+	// ConditionFleetConverged is True when ConvergenceScore == 1.0,
+	// meaning every desired resource is running and fresh.
+	ConditionFleetConverged = "FleetConverged"
+
+	// ConditionActualTopologyAvailable is True when actual_topology data has
+	// been written by the Surveyor at least once. False with reason
+	// SurveyorNotStarted before the first reconcile loop completes.
+	ConditionActualTopologyAvailable = "ActualTopologyAvailable"
+)
+
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
 // LocalRef names a Kubernetes object in the same namespace as the referencing CR.

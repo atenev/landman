@@ -290,10 +290,10 @@ func TestPatchStatusFromActual_FleetConverged_True_When_Score1(t *testing.T) {
 		t.Fatalf("patchStatusFromActual: %v", err)
 	}
 
-	if got := getConditionStatus(gt.Status.Conditions, "FleetConverged"); got != metav1.ConditionTrue {
+	if got := getConditionStatus(gt.Status.Conditions, gasv1alpha1.ConditionFleetConverged); got != metav1.ConditionTrue {
 		t.Errorf("FleetConverged = %q, want True", got)
 	}
-	if got := getConditionStatus(gt.Status.Conditions, "ActualTopologyAvailable"); got != metav1.ConditionTrue {
+	if got := getConditionStatus(gt.Status.Conditions, gasv1alpha1.ConditionActualTopologyAvailable); got != metav1.ConditionTrue {
 		t.Errorf("ActualTopologyAvailable = %q, want True", got)
 	}
 }
@@ -346,10 +346,10 @@ func TestPatchStatusFromActual_FleetConverged_False_PartialConvergence(t *testin
 	if score := gt.Status.ConvergenceScore; score >= 1.0 {
 		t.Errorf("ConvergenceScore = %.3f, want < 1.0", score)
 	}
-	if got := getConditionStatus(gt.Status.Conditions, "FleetConverged"); got != metav1.ConditionFalse {
+	if got := getConditionStatus(gt.Status.Conditions, gasv1alpha1.ConditionFleetConverged); got != metav1.ConditionFalse {
 		t.Errorf("FleetConverged = %q, want False", got)
 	}
-	if got := getConditionReason(gt.Status.Conditions, "FleetConverged"); got != "PartialConvergence" {
+	if got := getConditionReason(gt.Status.Conditions, gasv1alpha1.ConditionFleetConverged); got != "PartialConvergence" {
 		t.Errorf("FleetConverged reason = %q, want PartialConvergence", got)
 	}
 }
@@ -465,10 +465,10 @@ func TestPatchStatusFromActual_ActualTopologyAvailable_False_SurveyorNotStarted(
 		t.Fatalf("patchStatusFromActual returned unexpected error: %v", err)
 	}
 
-	if got := getConditionStatus(gt.Status.Conditions, "ActualTopologyAvailable"); got != metav1.ConditionFalse {
+	if got := getConditionStatus(gt.Status.Conditions, gasv1alpha1.ConditionActualTopologyAvailable); got != metav1.ConditionFalse {
 		t.Errorf("ActualTopologyAvailable = %q, want False", got)
 	}
-	if got := getConditionReason(gt.Status.Conditions, "ActualTopologyAvailable"); got != "SurveyorNotStarted" {
+	if got := getConditionReason(gt.Status.Conditions, gasv1alpha1.ConditionActualTopologyAvailable); got != "SurveyorNotStarted" {
 		t.Errorf("ActualTopologyAvailable reason = %q, want SurveyorNotStarted", got)
 	}
 }

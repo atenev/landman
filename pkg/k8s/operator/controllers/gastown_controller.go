@@ -450,7 +450,7 @@ LIMIT 1`
 	desired, actual, err := readTopologyForStatus(ctx, dolt.db)
 	if err != nil {
 		logger.Info("convergence score unavailable", "reason", err.Error())
-		r.setCondition(gt, "ActualTopologyAvailable", metav1.ConditionFalse,
+		r.setCondition(gt, gasv1alpha1.ConditionActualTopologyAvailable, metav1.ConditionFalse,
 			"SurveyorNotStarted", err.Error())
 	} else {
 		result := surveyor.ComputeScore(desired, actual,
@@ -461,15 +461,15 @@ LIMIT 1`
 		t := metav1.Now()
 		gt.Status.LastConvergenceAt = &t
 
-		r.setCondition(gt, "ActualTopologyAvailable", metav1.ConditionTrue,
+		r.setCondition(gt, gasv1alpha1.ConditionActualTopologyAvailable, metav1.ConditionTrue,
 			"TopologyRead", "actual_topology tables readable")
 
 		if result.Score == 1.0 {
-			r.setCondition(gt, "FleetConverged", metav1.ConditionTrue,
+			r.setCondition(gt, gasv1alpha1.ConditionFleetConverged, metav1.ConditionTrue,
 				"FullyConverged", "all desired resources are running")
 		} else {
 			msg := fmt.Sprintf("non-converged: %s", summariseNonConverged(result.NonConverged))
-			r.setCondition(gt, "FleetConverged", metav1.ConditionFalse,
+			r.setCondition(gt, gasv1alpha1.ConditionFleetConverged, metav1.ConditionFalse,
 				"PartialConvergence", msg)
 		}
 	}
