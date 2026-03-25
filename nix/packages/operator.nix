@@ -8,10 +8,8 @@ buildGoModule {
 
   subPackages = [ "cmd/operator" ];
 
-  # Shared vendorHash — same vendor/ tree as town-ctl.
-  # Computed via: nix hash path vendor/
-  # Update after every `go mod vendor` run.
-  vendorHash = "sha256-b6/De61+zAcf9BaHbORtOvlNaohUDloKjTN3C6OFioQ=";
+  # vendor/ is committed to the repo; buildGoModule uses it directly.
+  vendorHash = null;
 
   meta = with lib; {
     description = "Gas Town Kubernetes operator — reconciles Gas Town CRDs with cluster state";

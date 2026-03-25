@@ -8,9 +8,8 @@ buildGoModule {
 
   subPackages = [ "cmd/town-ctl" ];
 
-  # Computed via: nix hash path vendor/
-  # Update after every `go mod vendor` run.
-  vendorHash = "sha256-b6/De61+zAcf9BaHbORtOvlNaohUDloKjTN3C6OFioQ=";
+  # vendor/ is committed to the repo; buildGoModule uses it directly.
+  vendorHash = null;
 
   meta = with lib; {
     description = "Gas Town topology actuator — reads town.toml and writes desired topology to Dolt";

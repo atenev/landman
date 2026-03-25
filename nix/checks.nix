@@ -11,9 +11,10 @@
   # Verify gastown-operator builds without errors.
   operator-build = gastown-operator;
 
-  # Smoke test: town-ctl --help must exit 0.
+  # Smoke test: town-ctl version must exit 0.
+  # (town-ctl uses a custom CLI; --help is not a top-level flag.)
   town-ctl-smoke = runCommand "town-ctl-smoke" { } ''
-    ${town-ctl}/bin/town-ctl --help
+    ${town-ctl}/bin/town-ctl version
     touch $out
   '';
 }
