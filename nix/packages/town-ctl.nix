@@ -14,7 +14,6 @@ buildGoModule {
   meta = with lib; {
     description = "Gas Town topology actuator — reads town.toml and writes desired topology to Dolt";
     homepage = "https://github.com/tenev/dgt";
-    # Confirm license before publishing; update to the correct spdxId.
     license = licenses.mit;
     mainProgram = "town-ctl";
     platforms = platforms.linux ++ platforms.darwin;

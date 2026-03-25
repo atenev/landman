@@ -318,6 +318,31 @@ Recalculate the hash after any rev bump:
 nix-prefetch-url --unpack https://github.com/tenev/dgt/archive/<new-rev>.tar.gz
 ```
 
+### Updating Go dependencies (vendorHash)
+
+The `vendor/` directory is committed to the repository, so the Nix derivations
+use `vendorHash = null` (Nix reads `vendor/` directly instead of fetching
+dependencies). When Go dependencies change, re-vendor and commit:
+
+```bash
+go mod tidy
+go mod vendor
+git add vendor/ go.mod go.sum
+git commit -m "chore: update Go dependencies"
+```
+
+If you switch to network-based fetching (remove the committed `vendor/`), replace
+`vendorHash = null` with the correct hash:
+
+```bash
+# Compute the vendorHash for the current go.sum
+nix hash path $(nix build .#town-ctl --print-out-paths --no-link 2>/dev/null \
+  || go mod vendor -v 2>&1 >/dev/null && echo vendor)
+```
+
+Or use `vendorHash = lib.fakeHash` in the derivation, run `nix build .#town-ctl`
+once, and copy the correct hash from the error output.
+
 ### First-run steps
 
 1. **Install Dolt** and start it as a local server:
@@ -363,6 +388,7 @@ nix-prefetch-url --unpack https://github.com/tenev/dgt/archive/<new-rev>.tar.gz
 
 | Document | Description |
 |----------|-------------|
+| [docs/crd-reference.md](docs/crd-reference.md) | Kubernetes CRD reference — all four CRDs with field tables, YAML examples, and getting started walkthrough |
 | [docs/nix-module.md](docs/nix-module.md) | NixOS module option reference, systemd units, secret management, and full configuration examples |
 | [docs/townctl/design.md](docs/townctl/design.md) | `town-ctl` design and architecture |
 
