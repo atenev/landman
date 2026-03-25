@@ -388,9 +388,12 @@ once, and copy the correct hash from the error output.
 
 | Document | Description |
 |----------|-------------|
+| [docs/declarative-overview.md](docs/declarative-overview.md) | Declarative layer conceptual guide — why dgt exists and how the pieces fit together |
+| [docs/town-toml-reference.md](docs/town-toml-reference.md) | Full `town.toml` field reference with all sections, types, and defaults |
+| [docs/nix-module.md](docs/nix-module.md) | NixOS `services.dgt` module option reference, systemd units, and secret management |
 | [docs/crd-reference.md](docs/crd-reference.md) | Kubernetes CRD reference — all four CRDs with field tables, YAML examples, and getting started walkthrough |
-| [docs/nix-module.md](docs/nix-module.md) | NixOS module option reference, systemd units, secret management, and full configuration examples |
 | [docs/townctl/design.md](docs/townctl/design.md) | `town-ctl` design and architecture |
+| [docs/adr/](docs/adr/) | Architecture Decision Records index |
 
 ---
 
