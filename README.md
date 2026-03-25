@@ -229,6 +229,145 @@ Extend Gas Town's seven built-in roles without modifying `gt`:
 
 ---
 
+## Installation
+
+### Prerequisites
+
+- **Go 1.25+** — `go version` should report `go1.25` or later
+- **Dolt** — the Git-for-SQL database that serves as the control plane
+- **Git** — for cloning this repo and working with `town.toml`
+- **(Kubernetes deployments only)** `kubectl` + a running cluster
+
+### Build from source
+
+```bash
+git clone https://github.com/tenev/dgt
+cd dgt
+
+# Install town-ctl into $GOPATH/bin
+go install ./cmd/town-ctl
+
+# Or build locally
+go build -o ./bin/town-ctl ./cmd/town-ctl
+```
+
+### Binary install via Nix (recommended)
+
+```bash
+# Installs the latest town-ctl into your Nix profile
+nix profile install github:tenev/dgt
+
+# Drop into a dev shell with town-ctl, dolt, and kubectl pre-loaded
+nix develop github:tenev/dgt
+```
+
+### NixOS with a flake
+
+Add `dgt` as a flake input and enable the module:
+
+```nix
+# flake.nix
+inputs.dgt.url = "github:tenev/dgt";
+inputs.dgt.inputs.nixpkgs-unstable.follows = "nixpkgs";
+```
+
+```nix
+# configuration.nix
+{ ... }:
+{
+  imports = [ inputs.dgt.nixosModules.default ];
+
+  services.dgt = {
+    enable      = true;
+    configFile  = /etc/gt/town.toml;
+    autoApply.enable          = true;
+    autoApply.environmentFile = "/run/secrets/dgt-env";
+  };
+}
+```
+
+See [docs/nix-module.md](docs/nix-module.md) for the full option reference and
+secret-management guidance.
+
+### NixOS without a flake (fetchTarball)
+
+```nix
+# configuration.nix
+let
+  dgt = builtins.fetchTarball {
+    url    = "https://github.com/tenev/dgt/archive/<git-rev>.tar.gz";
+    sha256 = "<sha256>";
+  };
+in
+{
+  imports = [ "${dgt}/nix/modules/town-ctl.nix" ];
+  nixpkgs.overlays = [ (import "${dgt}/nix/overlays/default.nix") ];
+
+  services.dgt = {
+    enable      = true;
+    configFile  = /etc/gt/town.toml;
+    autoApply.enable          = true;
+    autoApply.environmentFile = "/run/secrets/dgt-env";
+  };
+}
+```
+
+Recalculate the hash after any rev bump:
+
+```bash
+nix-prefetch-url --unpack https://github.com/tenev/dgt/archive/<new-rev>.tar.gz
+```
+
+### First-run steps
+
+1. **Install Dolt** and start it as a local server:
+
+   ```bash
+   # macOS / Linux via shell script
+   curl -L https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash
+
+   # Or via Nix
+   nix profile install nixpkgs#dolt
+
+   dolt sql-server --host=127.0.0.1 --port=3306 &
+   ```
+
+2. **Write a minimal `town.toml`** (see `docs/examples/town.minimal.toml` for a
+   full annotated example):
+
+   ```toml
+   version = "1"
+
+   [town]
+   name      = "my-town"
+   home      = "${GT_HOME}"
+   dolt_port = 3306
+
+   [secrets]
+   anthropic_api_key = "${ANTHROPIC_API_KEY}"
+   ```
+
+3. **Apply the topology**:
+
+   ```bash
+   export GT_HOME=~/.gt
+   export ANTHROPIC_API_KEY=sk-ant-…
+
+   town-ctl apply town.toml
+   # Add --dry-run to preview changes without writing to Dolt
+   ```
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/nix-module.md](docs/nix-module.md) | NixOS module option reference, systemd units, secret management, and full configuration examples |
+| [docs/townctl/design.md](docs/townctl/design.md) | `town-ctl` design and architecture |
+
+---
+
 ## Design decisions (ADRs)
 
 | ADR | Title | Status |
